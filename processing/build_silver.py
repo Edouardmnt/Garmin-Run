@@ -8,13 +8,16 @@ Le script ne modifie jamais data/raw : on peut le relancer à volonté.
 """
 
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-RAW_DIR = ROOT / "data" / "raw"
-SILVER_DIR = ROOT / "data" / "silver"
+# Dossier de données : data/ par défaut, data/sample/ pour la démo
+DATA_DIR = Path(os.getenv("RUNLAB_DATA_DIR", ROOT / "data"))
+RAW_DIR = DATA_DIR / "raw"
+SILVER_DIR = DATA_DIR / "silver"
 
 # Harmonisation des types Garmin -> (sport, intérieur ?)
 SPORT_MAP = {

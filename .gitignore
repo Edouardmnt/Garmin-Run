@@ -5,7 +5,6 @@ __pycache__/
 
 # Données personnelles et jeux de données : JAMAIS dans Git
 data/
-!data/sample/
 *.fit
 *.gpx
 
@@ -13,4 +12,6 @@ data/
 .env
 .garminconnect/
 garmin_tokens.json
+
+# Sauvegardes Jupyter
 .ipynb_checkpoints/

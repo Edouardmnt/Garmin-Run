@@ -5,13 +5,16 @@ Sortie  : data/gold/daily_features.parquet
 """
 
 import math
+import os
 from pathlib import Path
 
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-SILVER_DIR = ROOT / "data" / "silver"
-GOLD_DIR = ROOT / "data" / "gold"
+# Dossier de données : data/ par défaut, data/sample/ pour la démo
+DATA_DIR = Path(os.getenv("RUNLAB_DATA_DIR", ROOT / "data"))
+SILVER_DIR = DATA_DIR / "silver"
+GOLD_DIR = DATA_DIR / "gold"
 
 # Coefficients du TRIMP de Banister : homme 0.64 / 1.92, femme 0.86 / 1.67
 TRIMP_A, TRIMP_B = 0.64, 1.92
