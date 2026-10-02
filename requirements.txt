@@ -2,3 +2,6 @@ garminconnect
 curl_cffi
 pandas
 pyarrow
+matplotlib
+jupyter
+nbstripout

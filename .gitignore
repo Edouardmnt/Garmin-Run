@@ -13,3 +13,4 @@ data/
 .env
 .garminconnect/
 garmin_tokens.json
+.ipynb_checkpoints/
