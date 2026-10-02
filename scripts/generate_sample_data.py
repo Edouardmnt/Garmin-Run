@@ -1,7 +1,7 @@
 """Génère des données Garmin SYNTHÉTIQUES, au même format que l'export réel (couche bronze).
 
 Permet de lancer tout le pipeline sans compte Garmin (démo, tests, CI).
-Sortie : data/sample/raw/activities.json et data/sample/raw/daily/AAAA-MM-JJ.json
+Sortie : data/sample/raw/ par défaut, ou $RUNLAB_DATA_DIR/raw/ si la variable est définie
 
 Les données sont fictives mais réalistes : tennis le soir, course, musculation,
 nuits non suivies, VFC qui baisse légèrement quand la charge s'accumule.
@@ -9,12 +9,14 @@ nuits non suivies, VFC qui baisse légèrement quand la charge s'accumule.
 
 import json
 import math
+import os
 import random
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_DIR = ROOT / "data" / "sample" / "raw"
+# Écrit dans $RUNLAB_DATA_DIR/raw (data/sample/raw par défaut)
+OUT_DIR = Path(os.getenv("RUNLAB_DATA_DIR", ROOT / "data" / "sample")) / "raw"
 DAYS = 180
 SEED = 42  # même graine = mêmes données à chaque exécution (reproductible)
 

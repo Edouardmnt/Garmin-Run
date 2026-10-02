@@ -1,5 +1,7 @@
 # Garmin-Run — charge d'entraînement et récupération multisport
 
+[![CI](https://github.com/Edouardmnt/Garmin-Run/actions/workflows/ci.yml/badge.svg)](https://github.com/Edouardmnt/Garmin-Run/actions/workflows/ci.yml)
+
 Projet personnel de data engineering et d'IA, construit **de bout en bout** à partir de mes propres données de montre Garmin : ingestion, data lake en couches, indicateurs d'entraînement, exploration, puis (à venir) modèle de récupération, conteneurisation, CI/CD, déploiement Kubernetes et coach IA.
 
 **La question de départ :** ma charge d'entraînement (course, tennis, musculation) a-t-elle un effet mesurable sur ma récupération, et peut-on la prédire ?
@@ -75,6 +77,18 @@ L'export utilise la bibliothèque non officielle [python-garminconnect](https://
 
 ---
 
+## Tests et intégration continue
+
+```bash
+pip install -r requirements-test.txt
+ruff check .     # qualité du code
+pytest -v        # tests unitaires et test de bout en bout du pipeline
+```
+
+À chaque push sur `main`, GitHub Actions (`.github/workflows/ci.yml`) vérifie le code avec ruff, génère les données synthétiques et exécute tout le pipeline bronze → silver → gold. Les tests vérifient notamment que les sports sont harmonisés, qu'une nuit sans montre reste absente (et non à zéro) et que la cible du modèle correspond bien à la nuit suivante.
+
+---
+
 ## Indicateurs calculés
 
 **TRIMP de Banister** (*TRaining IMPulse*) : la charge d'une séance, calculée à partir de sa durée et de la fréquence cardiaque moyenne. Il rend comparables des sports très différents (une heure de tennis et quarante minutes de course).
@@ -139,7 +153,11 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 │   └── generate_sample_data.py  # données synthétiques pour la démo
 ├── notebooks/
 │   └── 01_exploration.ipynb     # analyse exploratoire et conclusions
+├── tests/                       # tests unitaires et de bout en bout (pytest)
+├── .github/workflows/ci.yml     # intégration continue
+├── pyproject.toml               # configuration pytest et ruff
 ├── requirements.txt
+├── requirements-test.txt
 ├── .gitignore
 └── .gitattributes
 ```
@@ -153,7 +171,7 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 - [x] Indicateurs d'entraînement : TRIMP, ATL, CTL, TSB (gold)
 - [x] Analyse exploratoire
 - [x] Données synthétiques de démonstration
-- [ ] Tests automatisés et CI avec GitHub Actions
+- [x] Tests automatisés et CI avec GitHub Actions
 - [ ] Conteneurisation (Docker)
 - [ ] Modèle de prédiction de la récupération, comparé à une référence naïve, suivi avec MLflow
 - [ ] Données publiques à grande échelle (10 M+ sorties) traitées avec PySpark
