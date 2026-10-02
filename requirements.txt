@@ -1,2 +1,4 @@
 garminconnect
 curl_cffi
+pandas
+pyarrow
