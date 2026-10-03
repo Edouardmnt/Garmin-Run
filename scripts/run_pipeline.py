@@ -1,0 +1,37 @@
+"""Point d'entrée unique du pipeline, utilisé par l'image Docker.
+
+Modes :
+- demo    : données synthétiques -> silver -> gold (aucun compte nécessaire)
+- sync    : export Garmin -> silver -> gold (synchronisation réelle)
+- process : silver -> gold, à partir des données brutes déjà présentes
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+TRANSFORM = ["processing/build_silver.py", "processing/build_gold.py"]
+MODES = {
+    "demo": ["scripts/generate_sample_data.py", *TRANSFORM],
+    "sync": ["ingestion/garmin_export.py", *TRANSFORM],
+    "process": TRANSFORM,
+}
+
+
+def main() -> None:
+    mode = sys.argv[1] if len(sys.argv) > 1 else "demo"
+    if mode not in MODES:
+        print(f"Mode inconnu : {mode}. Modes possibles : {', '.join(MODES)}")
+        sys.exit(2)
+
+    for script in MODES[mode]:
+        print(f"\n==> {script}", flush=True)
+        # check=True : si une étape échoue, le pipeline s'arrête avec un code d'erreur
+        subprocess.run([sys.executable, str(ROOT / script)], check=True)
+
+    print(f"\nPipeline '{mode}' terminé.")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,13 @@
+# Rien de personnel ni d'inutile dans l'image
+.git/
+.github/
+.venv/
+data/
+notebooks/
+tests/
+.env
+.garminconnect/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.md

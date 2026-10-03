@@ -1,0 +1,6 @@
+# Environnement de développement complet (en local)
+-r requirements.txt
+-r requirements-test.txt
+matplotlib
+jupyter
+nbstripout

@@ -35,7 +35,7 @@ Le pipeline suit l'**architecture en médaillon** :
 
 Le dépôt ne contient **aucune donnée**. Un générateur produit des données **synthétiques** au même format que l'export Garmin réel, pour lancer tout le pipeline en quelques secondes.
 
-Prérequis : Python 3.12 ou plus récent.
+Prérequis : Python 3.12 ou plus récent (ou Docker, voir plus bas).
 
 **Linux / macOS**
 
@@ -64,9 +64,34 @@ python processing\build_gold.py
 
 La variable `RUNLAB_DATA_DIR` indique au pipeline d'utiliser `data/sample/` au lieu de `data/`. Sans elle, les scripts lisent les vraies données.
 
+## Avec Docker
+
+L'image contient tout le pipeline. Elle est construite, testée et publiée automatiquement sur le GitHub Container Registry à chaque push sur `main`.
+
+```bash
+docker run --rm ghcr.io/edouardmnt/garmin-run:latest demo
+```
+
+Ou en la construisant localement :
+
+```bash
+docker build -t garmin-run .
+docker run --rm garmin-run demo                          # données synthétiques
+docker run --rm -v "$(pwd)/data:/data" garmin-run process  # vos données brutes -> silver -> gold
+```
+
+| Mode | Étapes |
+|---|---|
+| `demo` | données synthétiques → silver → gold |
+| `sync` | export Garmin Connect → silver → gold |
+| `process` | silver → gold à partir des données brutes existantes |
+
+Le mode `sync` lit sa configuration dans des variables d'environnement (`GARMIN_DAYS`, `GARMINTOKENS`, `GARMIN_EMAIL`, `GARMIN_PASSWORD`) : aucun identifiant n'est inclus dans l'image. Les activités récupérées sont fusionnées avec l'historique existant, ce qui permet une synchronisation quotidienne sur quelques jours seulement (`GARMIN_DAYS=3`).
+
 ## Avec ses propres données Garmin
 
 ```bash
+pip install -r requirements-dev.txt    # environnement complet : pipeline, Jupyter, tests
 python ingestion/garmin_export.py      # identifiants demandés au premier lancement
 python processing/build_silver.py
 python processing/build_gold.py
@@ -150,14 +175,18 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 │   ├── build_silver.py          # bronze -> silver (Parquet)
 │   └── build_gold.py            # silver -> gold (TRIMP, ATL, CTL, TSB)
 ├── scripts/
-│   └── generate_sample_data.py  # données synthétiques pour la démo
+│   ├── generate_sample_data.py  # données synthétiques pour la démo
+│   └── run_pipeline.py          # point d'entrée (modes demo, sync, process)
 ├── notebooks/
 │   └── 01_exploration.ipynb     # analyse exploratoire et conclusions
 ├── tests/                       # tests unitaires et de bout en bout (pytest)
 ├── .github/workflows/ci.yml     # intégration continue
+├── Dockerfile                   # image du pipeline
+├── .dockerignore
 ├── pyproject.toml               # configuration pytest et ruff
-├── requirements.txt
-├── requirements-test.txt
+├── requirements.txt             # dépendances du pipeline (image Docker)
+├── requirements-test.txt        # dépendances de la CI
+├── requirements-dev.txt         # environnement de développement complet
 ├── .gitignore
 └── .gitattributes
 ```
@@ -172,7 +201,7 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 - [x] Analyse exploratoire
 - [x] Données synthétiques de démonstration
 - [x] Tests automatisés et CI avec GitHub Actions
-- [ ] Conteneurisation (Docker)
+- [x] Conteneurisation (Docker) et publication automatique de l'image
 - [ ] Modèle de prédiction de la récupération, comparé à une référence naïve, suivi avec MLflow
 - [ ] Données publiques à grande échelle (10 M+ sorties) traitées avec PySpark
 - [ ] Déploiement sur Kubernetes : CronJob de synchronisation quotidienne, API FastAPI, tableau de bord

@@ -1,7 +1,5 @@
+# Dépendances du pipeline (installées dans l'image Docker)
 garminconnect
 curl_cffi
 pandas
 pyarrow
-matplotlib
-jupyter
-nbstripout
