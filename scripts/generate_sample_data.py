@@ -67,7 +67,7 @@ def trimp(duration_s: float, avg_hr: float) -> float:
 
 def main() -> None:
     random.seed(SEED)
-    start = date.today() - timedelta(days=DAYS)
+    start = date(2026, 9, 30) - timedelta(days=DAYS)  # date fixe : données identiques partout, tout le temps
     activities, atl, hrv_base = [], 0.0, 65.0
     (OUT_DIR / "daily").mkdir(parents=True, exist_ok=True)
 
