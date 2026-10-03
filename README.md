@@ -110,6 +110,31 @@ kubectl -n garmin-run logs -f job/sync-test
 
 Le conteneur tourne avec un utilisateur sans privilèges, avec des ressources limitées. Les manifestes sont validés en CI avec kubeconform.
 
+## API : forme du jour, temps prédits, allures
+
+Une API FastAPI expose les résultats du pipeline. C'est elle que le futur coach IA interrogera pour construire une préparation.
+
+```bash
+uvicorn api.main:app --reload     # documentation interactive : http://127.0.0.1:8000/docs
+```
+
+| Point d'accès | Réponse |
+|---|---|
+| `GET /forme` | VFC et sommeil par rapport à la normale personnelle, charge aiguë et chronique, fraîcheur, ajustement du chrono du jour |
+| `GET /predictions?distance=10k` | Temps de base et temps ajusté à la forme du jour sur 5 km, 10 km, semi et marathon, avec la référence de Riegel |
+| `GET /allures` | Allures d'entraînement personnalisées : EF, marathon, seuil, fractionné long, vitesse |
+| `GET /seances` | Dernières sorties avec leur type (étiquette personnelle, sinon suggestion par règles) |
+
+**Méthode de prédiction** (`processing/performance.py`) : les formules de **Daniels et Gilbert (VDOT)** transforment une performance réelle en indicateur de capacité aérobie, puis en temps sur chaque distance et en allures d'entraînement. Les tests vérifient la conformité aux tables publiées de Daniels. Les performances utilisées sont les courses étiquetées et les meilleurs temps sur 1, 5 et 10 km calculés par Garmin dans chaque sortie, sur les 90 derniers jours.
+
+**Ajustement du jour** : une VFC nettement sous la normale, une nuit courte ou une fatigue accumulée allongent le temps prédit ; une fraîcheur positive le raccourcit légèrement. L'ajustement est volontairement prudent, borné entre -1 % et +3 %, et chaque correction est expliquée dans la réponse. Il sera calibré sur les données personnelles à mesure qu'elles s'accumulent.
+
+Sur Kubernetes, l'API tourne dans un `Deployment` avec sondes de disponibilité et de vivacité, et lit le volume de données en lecture seule (`k8s/40-api.yaml`) :
+
+```bash
+kubectl -n garmin-run port-forward svc/garmin-api 8000:80
+```
+
 ## Avec ses propres données Garmin
 
 ```bash
@@ -239,11 +264,14 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 │   └── garmin_export.py         # export Garmin Connect -> data/raw (bronze)
 ├── processing/
 │   ├── build_silver.py          # bronze -> silver (Parquet)
-│   └── build_gold.py            # silver -> gold (TRIMP, ATL, CTL, TSB)
+│   ├── build_gold.py            # silver -> gold (TRIMP, ATL, CTL, TSB)
+│   └── performance.py           # VDOT, temps prédits, allures, ajustement du jour
 ├── scripts/
 │   ├── generate_sample_data.py  # données Garmin synthétiques pour la démo
 │   ├── generate_sample_lifesnaps.py # données LifeSnaps synthétiques pour les tests
 │   ├── profile_lifesnaps.py     # profilage du jeu public avant intégration
+│   ├── make_run_labels.py       # fichier d'étiquetage des sorties, avec suggestions par règles
+│   ├── label_runs.py            # étiquetage interactif dans le terminal
 │   └── run_pipeline.py          # point d'entrée (modes demo, sync, process)
 ├── ml/
 │   ├── features.py              # harmonisation Garmin / LifeSnaps, variables relatives sans fuite
@@ -253,7 +281,9 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 │   └── train_transfer.py        # expérience personnel / global / global + personnel
 ├── notebooks/
 │   └── 01_exploration.ipynb     # analyse exploratoire et conclusions
-├── k8s/                         # manifestes Kubernetes (namespace, volume, config, CronJob)
+├── api/
+│   └── main.py                  # API FastAPI (forme, prédictions, allures, séances)
+├── k8s/                         # manifestes Kubernetes (namespace, volume, config, CronJob, API)
 │   └── tools/data-loader.yaml   # pod utilitaire pour accéder au volume
 ├── tests/                       # tests unitaires et de bout en bout (pytest)
 ├── .github/workflows/ci.yml     # intégration continue
@@ -284,7 +314,9 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 - [ ] Sélection de variables et ré-entraînement planifié
 - [ ] Données publiques à grande échelle (10 M+ sorties) traitées avec PySpark
 - [x] Déploiement sur Kubernetes : CronJob de synchronisation quotidienne, volume persistant, ConfigMap et Secret
-- [ ] API FastAPI et tableau de bord sur Kubernetes
+- [x] Classification des sorties (EF, tempo, fractionné, course) : règles et étiquetage interactif
+- [x] API FastAPI sur Kubernetes : forme du jour, temps prédits (VDOT), allures d'entraînement
+- [ ] Tableau de bord
 - [ ] Coach IA hebdomadaire basé sur un LLM
 - [ ] Monitoring et détection de dérive
 

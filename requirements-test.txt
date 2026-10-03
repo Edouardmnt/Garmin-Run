@@ -1,5 +1,7 @@
 pandas
 pyarrow
 scikit-learn
+fastapi
+httpx
 pytest
 ruff

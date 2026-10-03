@@ -96,7 +96,13 @@ def main() -> None:
     types = Counter(a.get("activityType", {}).get("typeKey", "?") for a in activities)
     print(f"{len(new)} activités récupérées, {len(activities)} au total : {dict(types)}")
 
-    # 2. Données quotidiennes : chaque jour de la période, dans l'ordre chronologique.
+    # 2. Prédictions de course calculées par la montre : référence de comparaison pour l'API
+    predictions = safe_call(client.get_race_predictions) if hasattr(client, "get_race_predictions") else None
+    if predictions:
+        save(RAW_DIR / "race_predictions.json", predictions)
+        print("Prédictions de course de la montre enregistrées.")
+
+    # 3. Données quotidiennes : chaque jour de la période, dans l'ordre chronologique.
     # Si le script est interrompu, la prochaine exécution reprend au dernier jour écrit.
     for i in range((end - start).days + 1):
         day = (start + timedelta(days=i)).isoformat()

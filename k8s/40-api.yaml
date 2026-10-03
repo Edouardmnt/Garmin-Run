@@ -1,0 +1,71 @@
+# API Garmin-Run : la même image que le pipeline, lancée en serveur web (lab 1 : Deployment + Service)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: garmin-api
+  namespace: garmin-run
+  labels:
+    app: garmin-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: garmin-api
+  template:
+    metadata:
+      labels:
+        app: garmin-api
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+      containers:
+        - name: api
+          image: ghcr.io/edouardmnt/garmin-run:latest
+          imagePullPolicy: Always
+          command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: garmin-config
+          readinessProbe:          # le Service n'envoie du trafic que quand l'API répond
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:           # Kubernetes redémarre le conteneur s'il ne répond plus
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+              readOnly: true       # l'API lit les données, seul le CronJob les écrit
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: garmin-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: garmin-api
+  namespace: garmin-run
+spec:
+  type: ClusterIP
+  selector:
+    app: garmin-api
+  ports:
+    - port: 80
+      targetPort: 8000

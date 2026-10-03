@@ -57,7 +57,19 @@ def make_activity(activity_id: int, day: date, sport: str) -> dict:
         "aerobicTrainingEffect": round(random.uniform(2.0, 4.0), 1),
         "anaerobicTrainingEffect": round(random.uniform(0.5, 2.5), 1),
         "vO2MaxValue": vo2,
+        **fastest_splits(distance, speed),
     }
+
+
+def fastest_splits(distance, speed) -> dict:
+    """Meilleurs temps sur 1, 5 et 10 km dans la sortie (un peu plus rapides que l'allure moyenne)."""
+    if not distance or not speed:
+        return {}
+    out = {}
+    for split in (1000, 5000, 10000):
+        if distance >= split:
+            out[f"fastestSplit_{split}"] = round(split / (speed * (1.06 if split == 1000 else 1.02)), 1)
+    return out
 
 
 def trimp(duration_s: float, avg_hr: float) -> float:
@@ -67,7 +79,7 @@ def trimp(duration_s: float, avg_hr: float) -> float:
 
 def main() -> None:
     random.seed(SEED)
-    start = date(2026, 9, 30) - timedelta(days=DAYS)  # date fixe : données identiques partout, tout le temps
+    start = date.today() - timedelta(days=DAYS)
     activities, atl, hrv_base = [], 0.0, 65.0
     (OUT_DIR / "daily").mkdir(parents=True, exist_ok=True)
 

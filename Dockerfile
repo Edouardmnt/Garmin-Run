@@ -20,6 +20,7 @@ COPY ingestion/ ingestion/
 COPY processing/ processing/
 COPY scripts/ scripts/
 COPY ml/ ml/
+COPY api/ api/
 
 USER app
 VOLUME ["/data"]

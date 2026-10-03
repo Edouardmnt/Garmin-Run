@@ -64,6 +64,10 @@ def build_activities() -> pd.DataFrame:
             "aerobic_te": a.get("aerobicTrainingEffect"),
             "anaerobic_te": a.get("anaerobicTrainingEffect"),
             "vo2max": a.get("vO2MaxValue"),
+            # Meilleurs temps (s) sur 1 km, 5 km et 10 km à l'intérieur de la sortie, calculés par Garmin
+            "fastest_1k_s": a.get("fastestSplit_1000"),
+            "fastest_5k_s": a.get("fastestSplit_5000"),
+            "fastest_10k_s": a.get("fastestSplit_10000"),
         })
 
     df = pd.DataFrame(rows)

@@ -1,6 +1,8 @@
-# Dépendances du pipeline (installées dans l'image Docker)
+# Dépendances du pipeline et de l'API (installées dans l'image Docker)
 garminconnect
 curl_cffi
 pandas
 pyarrow
 scikit-learn
+fastapi
+uvicorn
