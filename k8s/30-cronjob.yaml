@@ -8,6 +8,7 @@ spec:
   schedule: "0 6 * * *"
   timeZone: "Europe/Paris"
   concurrencyPolicy: Forbid          # jamais deux synchronisations en même temps
+  startingDeadlineSeconds: 604800    # PC éteint jusqu'à 7 jours : une synchro se lance dès le redémarrage
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:

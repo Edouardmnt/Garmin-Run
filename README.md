@@ -86,7 +86,7 @@ docker run --rm -v "$(pwd)/data:/data" garmin-run process  # vos données brutes
 | `sync` | export Garmin Connect → silver → gold |
 | `process` | silver → gold à partir des données brutes existantes |
 
-Le mode `sync` lit sa configuration dans des variables d'environnement (`GARMIN_DAYS`, `GARMINTOKENS`, `GARMIN_EMAIL`, `GARMIN_PASSWORD`) : aucun identifiant n'est inclus dans l'image. Les activités récupérées sont fusionnées avec l'historique existant, ce qui permet une synchronisation quotidienne sur quelques jours seulement (`GARMIN_DAYS=3`).
+Le mode `sync` lit sa configuration dans des variables d'environnement (`GARMIN_DAYS`, `GARMINTOKENS`, `GARMIN_EMAIL`, `GARMIN_PASSWORD`) : aucun identifiant n'est inclus dans l'image. La synchronisation est **incrémentale** : elle repart du dernier jour déjà téléchargé (*watermark*) et récupère tous les jours manquants, que la dernière exécution date d'hier ou de plusieurs semaines. Les activités sont fusionnées avec l'historique, sans doublon.
 
 ## Sur Kubernetes
 
@@ -96,9 +96,9 @@ Le dossier `k8s/` déploie la synchronisation quotidienne sur un cluster (testé
 |---|---|
 | `Namespace` `garmin-run` | Isole toutes les ressources du projet |
 | `PersistentVolumeClaim` `garmin-data` | Volume persistant pour `/data` (bronze, silver, gold, jetons) |
-| `ConfigMap` `garmin-config` | Configuration non sensible (`GARMIN_DAYS=3`, chemins) |
+| `ConfigMap` `garmin-config` | Configuration non sensible (profondeur du chargement initial, chemins) |
 | `Secret` `garmin-credentials` | Identifiants de secours, optionnel, jamais versionné |
-| `CronJob` `garmin-sync` | Pipeline `sync` chaque matin à 6 h (Europe/Paris), sans chevauchement, une seule nouvelle tentative |
+| `CronJob` `garmin-sync` | Pipeline `sync` chaque matin à 6 h (Europe/Paris), sans chevauchement, une seule nouvelle tentative, rattrapage jusqu'à 7 jours |
 
 ```bash
 kubectl apply -f k8s/

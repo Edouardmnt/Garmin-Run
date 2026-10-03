@@ -6,5 +6,6 @@ metadata:
   namespace: garmin-run
 data:
   RUNLAB_DATA_DIR: /data
-  GARMIN_DAYS: "3"                     # synchronisation incrémentale : les 3 derniers jours
+  GARMIN_DAYS: "200"                   # profondeur du chargement initial, si le volume est vide.
+                                       # Ensuite, la synchro repart du dernier jour connu (watermark).
   GARMINTOKENS: /data/.garminconnect   # jetons sur le volume : ils survivent aux Jobs et se rafraîchissent
