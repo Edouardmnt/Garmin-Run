@@ -1,0 +1,58 @@
+# Synchronisation Garmin + transformations, chaque matin à 6 h, heure de Paris (lab 3)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: garmin-sync
+  namespace: garmin-run
+spec:
+  schedule: "0 6 * * *"
+  timeZone: "Europe/Paris"
+  concurrencyPolicy: Forbid          # jamais deux synchronisations en même temps
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1                # une seule nouvelle tentative : insister déclenche les blocages 429 de Garmin
+      activeDeadlineSeconds: 900     # 15 minutes maximum
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsUser: 1000          # l'utilisateur "app" de l'image, sans privilèges
+            runAsGroup: 1000
+            runAsNonRoot: true
+          containers:
+            - name: pipeline
+              image: ghcr.io/edouardmnt/garmin-run:latest
+              args: ["sync"]
+              envFrom:
+                - configMapRef:
+                    name: garmin-config
+              env:
+                # Identifiants de secours, utilisés seulement si les jetons sont invalides (lab 2).
+                # optional: true -> le Job fonctionne même si le Secret n'existe pas.
+                - name: GARMIN_EMAIL
+                  valueFrom:
+                    secretKeyRef:
+                      name: garmin-credentials
+                      key: email
+                      optional: true
+                - name: GARMIN_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: garmin-credentials
+                      key: password
+                      optional: true
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  memory: 1Gi
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: garmin-data

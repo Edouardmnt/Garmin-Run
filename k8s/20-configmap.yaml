@@ -1,0 +1,10 @@
+# Configuration non sensible du pipeline (lab 2)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: garmin-config
+  namespace: garmin-run
+data:
+  RUNLAB_DATA_DIR: /data
+  GARMIN_DAYS: "3"                     # synchronisation incrémentale : les 3 derniers jours
+  GARMINTOKENS: /data/.garminconnect   # jetons sur le volume : ils survivent aux Jobs et se rafraîchissent

@@ -1,0 +1,5 @@
+# Compartiment dédié au projet : tout se supprime d'un coup avec "kubectl delete namespace garmin-run"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: garmin-run

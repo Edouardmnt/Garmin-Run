@@ -88,6 +88,26 @@ docker run --rm -v "$(pwd)/data:/data" garmin-run process  # vos données brutes
 
 Le mode `sync` lit sa configuration dans des variables d'environnement (`GARMIN_DAYS`, `GARMINTOKENS`, `GARMIN_EMAIL`, `GARMIN_PASSWORD`) : aucun identifiant n'est inclus dans l'image. Les activités récupérées sont fusionnées avec l'historique existant, ce qui permet une synchronisation quotidienne sur quelques jours seulement (`GARMIN_DAYS=3`).
 
+## Sur Kubernetes
+
+Le dossier `k8s/` déploie la synchronisation quotidienne sur un cluster (testé avec minikube) :
+
+| Ressource | Rôle |
+|---|---|
+| `Namespace` `garmin-run` | Isole toutes les ressources du projet |
+| `PersistentVolumeClaim` `garmin-data` | Volume persistant pour `/data` (bronze, silver, gold, jetons) |
+| `ConfigMap` `garmin-config` | Configuration non sensible (`GARMIN_DAYS=3`, chemins) |
+| `Secret` `garmin-credentials` | Identifiants de secours, optionnel, jamais versionné |
+| `CronJob` `garmin-sync` | Pipeline `sync` chaque matin à 6 h (Europe/Paris), sans chevauchement, une seule nouvelle tentative |
+
+```bash
+kubectl apply -f k8s/
+kubectl -n garmin-run create job sync-test --from=cronjob/garmin-sync   # lancement manuel
+kubectl -n garmin-run logs -f job/sync-test
+```
+
+Le conteneur tourne avec un utilisateur sans privilèges, avec des ressources limitées. Les manifestes sont validés en CI avec kubeconform.
+
 ## Avec ses propres données Garmin
 
 ```bash
@@ -179,6 +199,8 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 │   └── run_pipeline.py          # point d'entrée (modes demo, sync, process)
 ├── notebooks/
 │   └── 01_exploration.ipynb     # analyse exploratoire et conclusions
+├── k8s/                         # manifestes Kubernetes (namespace, volume, config, CronJob)
+│   └── tools/data-loader.yaml   # pod utilitaire pour accéder au volume
 ├── tests/                       # tests unitaires et de bout en bout (pytest)
 ├── .github/workflows/ci.yml     # intégration continue
 ├── Dockerfile                   # image du pipeline
@@ -204,7 +226,8 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 - [x] Conteneurisation (Docker) et publication automatique de l'image
 - [ ] Modèle de prédiction de la récupération, comparé à une référence naïve, suivi avec MLflow
 - [ ] Données publiques à grande échelle (10 M+ sorties) traitées avec PySpark
-- [ ] Déploiement sur Kubernetes : CronJob de synchronisation quotidienne, API FastAPI, tableau de bord
+- [x] Déploiement sur Kubernetes : CronJob de synchronisation quotidienne, volume persistant, ConfigMap et Secret
+- [ ] API FastAPI et tableau de bord sur Kubernetes
 - [ ] Coach IA hebdomadaire basé sur un LLM
 - [ ] Monitoring et détection de dérive
 

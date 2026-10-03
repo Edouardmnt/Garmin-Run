@@ -1,0 +1,13 @@
+# Volume persistant pour /data (bronze, silver, gold et jetons Garmin).
+# Contrairement au système de fichiers d'un Pod, il survit à la fin des Jobs.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: garmin-data
+  namespace: garmin-run
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
