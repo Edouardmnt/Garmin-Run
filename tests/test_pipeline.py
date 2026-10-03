@@ -1,29 +1,6 @@
 """Test de bout en bout : données synthétiques -> bronze -> silver -> gold."""
 
-import os
-import subprocess
-import sys
-from pathlib import Path
-
 import pandas as pd
-import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = [
-    "scripts/generate_sample_data.py",
-    "processing/build_silver.py",
-    "processing/build_gold.py",
-]
-
-
-@pytest.fixture(scope="module")
-def data_dir(tmp_path_factory):
-    """Exécute tout le pipeline une fois, dans un dossier temporaire."""
-    out = tmp_path_factory.mktemp("data")
-    env = {**os.environ, "RUNLAB_DATA_DIR": str(out)}
-    for script in SCRIPTS:
-        subprocess.run([sys.executable, script], cwd=ROOT, env=env, check=True)
-    return out
 
 
 def test_les_trois_couches_existent(data_dir):
@@ -70,3 +47,11 @@ def test_gold_cible_est_la_nuit_suivante(data_dir):
         gold["hrv_last_night"].iloc[1:].reset_index(drop=True),
         check_names=False,
     )
+
+
+def test_gold_contexte_des_seances(data_dir):
+    gold = pd.read_parquet(data_dir / "gold" / "daily_features.parquet")
+    # L'heure de la dernière séance n'existe que les jours d'entraînement
+    assert gold.loc[gold["is_rest_day"], "last_session_hour"].isna().all()
+    assert gold.loc[~gold["is_rest_day"], "last_session_hour"].between(0, 24).all()
+    assert gold["weekday"].between(0, 6).all()

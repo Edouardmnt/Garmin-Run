@@ -49,6 +49,9 @@ def main() -> None:
         index="date", columns="sport", values="trimp", aggfunc="sum", fill_value=0
     ).add_prefix("load_")
     load["load_total"] = load.sum(axis=1)
+    # Heure de début de la dernière séance de la journée (piste ouverte par l'exploration)
+    act["start_hour"] = pd.to_datetime(act["start_time"]).dt.hour + pd.to_datetime(act["start_time"]).dt.minute / 60
+    load["last_session_hour"] = act.groupby("date")["start_hour"].max()
 
     # 3. Calendrier complet : un jour sans activité = charge 0
     df = daily.merge(load, left_on="date", right_index=True, how="left").sort_values("date")
@@ -61,11 +64,18 @@ def main() -> None:
     df["tsb"] = df["ctl"] - df["atl"]  # négatif = plus fatigué que d'habitude
     df["acwr"] = df["atl"] / df["ctl"].where(df["ctl"] > 0)
 
-    # 5. Récupération : une nuit absente n'est PAS une nuit à zéro
+    # 5. Contexte du jour
+    df["weekday"] = df["date"].dt.weekday  # 0 = lundi
+    df["is_rest_day"] = df["load_total"] == 0
+
+    # 6. Récupération : une nuit absente n'est PAS une nuit à zéro
     df["night_tracked"] = df["sleep_s"].notna()
+    # Nuit de moins de 4 h : probablement enregistrée en partie seulement (montre mise en cours de nuit)
+    df["night_suspect"] = df["sleep_h"] < 4
     # Cibles du futur modèle : la récupération de la nuit SUIVANTE
     df["hrv_next"] = df["hrv_last_night"].shift(-1)
     df["resting_hr_next"] = df["resting_hr"].shift(-1)
+    df["next_night_suspect"] = df["night_suspect"].shift(-1, fill_value=False)
 
     GOLD_DIR.mkdir(parents=True, exist_ok=True)
     df.to_parquet(GOLD_DIR / "daily_features.parquet", index=False)

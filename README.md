@@ -85,6 +85,8 @@ docker run --rm -v "$(pwd)/data:/data" garmin-run process  # vos données brutes
 | `demo` | données synthétiques → silver → gold |
 | `sync` | export Garmin Connect → silver → gold |
 | `process` | silver → gold à partir des données brutes existantes |
+| `train` | entraînement et évaluation du modèle de récupération |
+| `transfer` | expérience de transfert avec LifeSnaps (si le fichier est présent dans le volume) |
 
 Le mode `sync` lit sa configuration dans des variables d'environnement (`GARMIN_DAYS`, `GARMINTOKENS`, `GARMIN_EMAIL`, `GARMIN_PASSWORD`) : aucun identifiant n'est inclus dans l'image. La synchronisation est **incrémentale** : elle repart du dernier jour déjà téléchargé (*watermark*) et récupère tous les jours manquants, que la dernière exécution date d'hier ou de plusieurs semaines. Les activités sont fusionnées avec l'historique, sans doublon.
 
@@ -159,6 +161,50 @@ Choix méthodologiques :
 
 ---
 
+## Modèle de récupération
+
+**Objectif :** prédire la VFC (variabilité de la fréquence cardiaque) de la nuit suivante à partir de l'état de récupération du jour, de la charge d'entraînement et du contexte (jour de repos, heure de la dernière séance, week-end).
+
+```bash
+python -m ml.train_recovery
+mlflow ui --backend-store-uri sqlite:///data/mlflow/mlflow.db   # puis http://127.0.0.1:5000
+```
+
+Méthode :
+
+- **Validation temporelle (walk-forward)** : le modèle est toujours entraîné sur le passé et testé sur le futur, sur 5 périodes successives. Un découpage aléatoire ferait « voir l'avenir » au modèle et surestimerait ses performances.
+- **Deux références naïves** : « la VFC de demain sera celle d'aujourd'hui » et « la VFC de demain sera ma moyenne des 7 derniers jours ». Un modèle n'est retenu comme utile que s'il fait mieux que la meilleure des deux.
+- **Quatre modèles** : une régression Ridge (simple et interprétable) et un gradient boosting (effets non linéaires, valeurs manquantes gérées nativement), chacun en deux versions : prédiction directe de la VFC, ou version **résiduelle** qui n'apprend que la correction à apporter à la moyenne des 7 derniers jours. Sans signal, la version résiduelle retombe sur la référence.
+- **Données exclues** : les nuits non suivies et les nuits de moins de 4 h, probablement enregistrées en partie seulement.
+- **Suivi avec MLflow** : paramètres, erreurs moyennes (MAE) de chaque modèle et de chaque référence, gain par rapport à la meilleure référence, et modèle final. Le suivi est stocké dans `data/`, donc jamais publié.
+
+## Transfert : apprendre aussi des autres
+
+Mes données ne couvrent que quelques mois. Pour savoir si les données d'autres personnes peuvent aider à prédire **ma** récupération, le projet intègre le jeu public **LifeSnaps** : 71 participants suivis plusieurs mois avec une montre Fitbit Sense, dont 43 avec une VFC nocturne et environ 2 100 paires de nuits consécutives exploitables.
+
+```bash
+python scripts/profile_lifesnaps.py   # vérifie le jeu avant de l'utiliser
+python -m ml.train_transfer           # expérience de transfert, suivie dans MLflow
+```
+
+**Harmonisation entre deux montres** (`ml/features.py`) :
+
+- toutes les variables sont **relatives à la personne** : VFC en écart relatif à sa moyenne, FC de repos et sommeil en écart à sa référence sur 28 jours, charge rapportée à sa charge chronique (ACWR) ;
+- la charge LifeSnaps est un **TRIMP d'Edwards** calculé à partir des minutes passées dans chaque zone cardiaque ;
+- la cible est la **variation relative** de la VFC du lendemain, comparable d'une montre et d'une personne à l'autre ;
+- les références personnelles sont calculées **uniquement sur le passé**, ce que vérifie un test dédié ;
+- le score de stress est exclu : Fitbit et Garmin l'expriment dans des sens opposés.
+
+**Trois stratégies**, toutes évaluées sur mes données avec la même validation temporelle :
+
+| Stratégie | Entraînement |
+|---|---|
+| `personnel` | mon historique passé uniquement |
+| `global` | les participants LifeSnaps uniquement |
+| `global_plus_personnel` | LifeSnaps et mon historique passé, mes jours ayant un poids 5 fois plus fort |
+
+> Données : Yfantidou S. et al. (2022). *LifeSnaps, a 4-month multi-modal dataset capturing unobtrusive snapshots of our lives in the wild.* Scientific Data. Jeu de données : [doi:10.5281/zenodo.7229547](https://doi.org/10.5281/zenodo.7229547), licence CC BY 4.0. Les données ne sont pas incluses dans ce dépôt.
+
 ## Premiers résultats
 
 Analyse sur environ 5 mois de données réelles (≈ 145 nuits suivies), détaillée dans `notebooks/01_exploration.ipynb` :
@@ -195,8 +241,16 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 │   ├── build_silver.py          # bronze -> silver (Parquet)
 │   └── build_gold.py            # silver -> gold (TRIMP, ATL, CTL, TSB)
 ├── scripts/
-│   ├── generate_sample_data.py  # données synthétiques pour la démo
+│   ├── generate_sample_data.py  # données Garmin synthétiques pour la démo
+│   ├── generate_sample_lifesnaps.py # données LifeSnaps synthétiques pour les tests
+│   ├── profile_lifesnaps.py     # profilage du jeu public avant intégration
 │   └── run_pipeline.py          # point d'entrée (modes demo, sync, process)
+├── ml/
+│   ├── features.py              # harmonisation Garmin / LifeSnaps, variables relatives sans fuite
+│   ├── models.py                # modèle résiduel (correction de la moyenne des 7 jours)
+│   ├── tracking.py              # configuration commune de MLflow
+│   ├── train_recovery.py        # modèle personnel, évaluation temporelle et suivi MLflow
+│   └── train_transfer.py        # expérience personnel / global / global + personnel
 ├── notebooks/
 │   └── 01_exploration.ipynb     # analyse exploratoire et conclusions
 ├── k8s/                         # manifestes Kubernetes (namespace, volume, config, CronJob)
@@ -224,7 +278,10 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 - [x] Données synthétiques de démonstration
 - [x] Tests automatisés et CI avec GitHub Actions
 - [x] Conteneurisation (Docker) et publication automatique de l'image
-- [ ] Modèle de prédiction de la récupération, comparé à une référence naïve, suivi avec MLflow
+- [x] Modèle de prédiction de la récupération v1 : validation temporelle, références naïves, suivi MLflow
+- [x] Modèles résiduels (correction de la moyenne personnelle)
+- [x] Transfert depuis un jeu public (LifeSnaps, 71 participants) avec variables relatives à chaque personne
+- [ ] Sélection de variables et ré-entraînement planifié
 - [ ] Données publiques à grande échelle (10 M+ sorties) traitées avec PySpark
 - [x] Déploiement sur Kubernetes : CronJob de synchronisation quotidienne, volume persistant, ConfigMap et Secret
 - [ ] API FastAPI et tableau de bord sur Kubernetes

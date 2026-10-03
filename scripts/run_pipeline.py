@@ -4,6 +4,8 @@ Modes :
 - demo    : données synthétiques -> silver -> gold (aucun compte nécessaire)
 - sync    : export Garmin -> silver -> gold (synchronisation réelle)
 - process : silver -> gold, à partir des données brutes déjà présentes
+- train   : entraînement et évaluation du modèle de récupération sur la couche gold
+- transfer: expérience personnel / global (LifeSnaps) / global + personnel
 """
 
 import subprocess
@@ -11,11 +13,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TRANSFORM = ["processing/build_silver.py", "processing/build_gold.py"]
+TRANSFORM = [["processing/build_silver.py"], ["processing/build_gold.py"]]
 MODES = {
-    "demo": ["scripts/generate_sample_data.py", *TRANSFORM],
-    "sync": ["ingestion/garmin_export.py", *TRANSFORM],
+    "demo": [["scripts/generate_sample_data.py"], *TRANSFORM],
+    "sync": [["ingestion/garmin_export.py"], *TRANSFORM],
     "process": TRANSFORM,
+    "train": [["-m", "ml.train_recovery"]],  # lancé comme module : les modèles maison restent importables
+    "transfer": [["-m", "ml.train_transfer"]],
 }
 
 
@@ -25,10 +29,10 @@ def main() -> None:
         print(f"Mode inconnu : {mode}. Modes possibles : {', '.join(MODES)}")
         sys.exit(2)
 
-    for script in MODES[mode]:
-        print(f"\n==> {script}", flush=True)
+    for step in MODES[mode]:
+        print(f"\n==> {' '.join(step)}", flush=True)
         # check=True : si une étape échoue, le pipeline s'arrête avec un code d'erreur
-        subprocess.run([sys.executable, str(ROOT / script)], check=True)
+        subprocess.run([sys.executable, *step], cwd=ROOT, check=True)
 
     print(f"\nPipeline '{mode}' terminé.")
 

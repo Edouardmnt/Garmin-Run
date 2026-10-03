@@ -19,6 +19,7 @@ RUN useradd --create-home app && mkdir -p /data && chown app /data
 COPY ingestion/ ingestion/
 COPY processing/ processing/
 COPY scripts/ scripts/
+COPY ml/ ml/
 
 USER app
 VOLUME ["/data"]

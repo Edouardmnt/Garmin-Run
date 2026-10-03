@@ -15,3 +15,7 @@ garmin_tokens.json
 
 # Sauvegardes Jupyter
 .ipynb_checkpoints/
+
+# Suivi MLflow (contient des métriques issues de données personnelles)
+mlruns/
+mlartifacts/
