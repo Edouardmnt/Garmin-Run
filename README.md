@@ -146,7 +146,7 @@ kubectl -n garmin-run port-forward svc/garmin-api 8000:80
 
 ## Tableau de bord
 
-Une interface **Streamlit** à l'identité « piste et dossard » (violet de piste, chiffres condensés façon dossard) :
+Une interface **Streamlit** au style sportif, chic et épuré : beaucoup de blanc, une seule couleur d'accent (vert anglais), de grands chiffres fins pour les temps, des séances présentées comme un carnet d'entraînement. La police **Archivo** est intégrée à l'application (`dashboard/static/`, licence libre SIL OFL) pour un rendu identique partout, y compris sans accès internet dans le cluster.
 
 | Page | Contenu |
 |---|---|
@@ -341,7 +341,8 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 │   └── main.py                  # API FastAPI (forme, prédictions, allures, historique, séances)
 ├── dashboard/
 │   ├── app.py                   # tableau de bord Streamlit, client de l'API
-│   └── style.css                # direction artistique « piste et dossard »
+│   ├── style.css                # direction artistique : sportif, chic, épuré
+│   └── static/                  # police Archivo intégrée (licence OFL)
 ├── k8s/                         # manifestes Kubernetes (namespace, volume, config, CronJob, API)
 │   └── tools/data-loader.yaml   # pod utilitaire pour accéder au volume
 ├── tests/                       # tests unitaires et de bout en bout (pytest)

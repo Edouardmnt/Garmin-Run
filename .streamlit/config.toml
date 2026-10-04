@@ -1,10 +1,17 @@
-# Thème de base du tableau de bord (complété par dashboard/style.css)
+# Thème du tableau de bord (complété par dashboard/style.css)
 [theme]
 base = "light"
-primaryColor = "#4B2A7B"
-backgroundColor = "#EEF0F5"
-secondaryBackgroundColor = "#FFFFFF"
-textColor = "#1B1F3B"
+primaryColor = "#1F5C4A"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F6F7"
+textColor = "#14181F"
+font = "sans serif"
+
+[server]
+enableStaticServing = true   # sert dashboard/static/ (la police Archivo) à l'adresse /app/static/
+
+[client]
+toolbarMode = "minimal"
 
 [browser]
 gatherUsageStats = false

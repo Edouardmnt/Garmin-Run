@@ -1,170 +1,124 @@
-@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,700;0,800;1,700&family=Barlow:wght@400;500;600&display=swap");
+/* Garmin-Run : sportif, chic, épuré. Une famille (Archivo), une couleur d'accent (vert anglais). */
+@font-face {
+  font-family: "Archivo";
+  src: url("/app/static/Archivo.ttf") format("truetype");
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-display: swap;
+}
 
 :root {
-  --piste: #4B2A7B;        /* violet de piste */
-  --piste-clair: #EDE7F6;
-  --encre: #1B1F3B;        /* bleu nuit */
-  --gris: #EEF0F5;         /* revêtement */
-  --ligne: #FFFFFF;        /* lignes de couloir */
-  --texte-doux: #5B6078;
-  --vert: #1E9E6A;
-  --ambre: #E0A100;
-  --rouge: #D64545;
+  --encre: #14181F;
+  --gris: #6B7280;
+  --filet: #E3E5E8;
+  --surface: #F5F6F7;
+  --accent: #1F5C4A;
+  --ok: #1F7A5A;
+  --vigilance: #B7791F;
+  --alerte: #B4432F;
 }
 
-html, body, [class*="css"], .stMarkdown, p, li, label, input, button {
-  font-family: "Barlow", system-ui, sans-serif;
+.stApp, .stApp *:not([data-testid="stIconMaterial"]):not(.material-symbols-rounded) {
+  font-family: "Archivo", "Helvetica Neue", Arial, sans-serif !important;
 }
+.stApp { color: var(--encre); }
+p, li { font-size: 1rem; line-height: 1.55; }
 
-h1, h2, h3, h4 {
-  font-family: "Barlow Condensed", "Arial Narrow", sans-serif !important;
-  font-weight: 700 !important;
-  color: var(--encre);
-  letter-spacing: 0.01em;
-}
-h1 { font-size: 2.6rem !important; line-height: 1.05 !important; }
-h2 { font-size: 1.9rem !important; margin-top: 1.6rem !important; }
-h3 { font-size: 1.35rem !important; }
+/* Chrome Streamlit masqué : l'application occupe tout l'écran */
+header[data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"], #MainMenu, footer { display: none !important; }
+.block-container { max-width: 1120px; padding: 2.2rem 2rem 4rem; }
 
-.block-container { max-width: 1180px; padding-top: 1.2rem; }
+h1, h2, h3, h4 { font-family: "Archivo", sans-serif !important; color: var(--encre) !important; letter-spacing: -0.01em; }
+h1 { font-size: 2.4rem !important; font-weight: 300 !important; font-stretch: 100%; margin-bottom: .2rem !important; }
+h2 {
+  font-size: 1.05rem !important; font-weight: 600 !important; margin: 2.6rem 0 1rem !important;
+  padding-bottom: .55rem; border-bottom: 1px solid var(--filet);
+}
+h3 { font-size: 1rem !important; font-weight: 600 !important; }
+[data-testid="stCaptionContainer"], .stCaption { color: var(--gris) !important; }
 
-/* Navigation : des couloirs de piste */
-div[role="radiogroup"][aria-label="Navigation"] {
-  background: var(--piste);
-  border-radius: 10px;
-  padding: 6px;
-  gap: 4px;
-  background-image: repeating-linear-gradient(90deg, transparent 0 calc(100% / 7 - 1px), rgba(255,255,255,.18) 0 calc(100% / 7));
+/* En-tête : marque et navigation en liens soulignés */
+.marque { font-weight: 700; font-stretch: 112%; font-size: 1.05rem; letter-spacing: .01em; }
+.marque span { color: var(--accent); }
+.st-key-page div[role="radiogroup"] { gap: 1.8rem; border-bottom: 1px solid var(--filet); flex-wrap: wrap; width: 100%; }
+.st-key-page [data-testid="stRadioOption"] {
+  padding: .25rem 0 .75rem; margin: 0 !important; border-bottom: 2px solid transparent; cursor: pointer;
 }
-div[role="radiogroup"][aria-label="Navigation"] label {
-  flex: 1;
-  justify-content: center;
-  padding: 8px 6px;
-  border-radius: 6px;
-  margin: 0 !important;
-}
-div[role="radiogroup"][aria-label="Navigation"] label p {
-  color: #fff !important;
-  font-family: "Barlow Condensed", sans-serif;
-  font-weight: 700;
-  font-size: 1.15rem;
-}
-div[role="radiogroup"][aria-label="Navigation"] label:has(input:checked) { background: #fff; }
-div[role="radiogroup"][aria-label="Navigation"] label:has(input:checked) p { color: var(--piste) !important; }
-div[role="radiogroup"][aria-label="Navigation"] label > div:first-child { display: none; }
+.st-key-page [data-testid="stRadioOption"] > div > div:first-child:not([data-testid]) { display: none !important; }
+.st-key-page [data-testid="stRadioOption"] p { font-size: .97rem !important; color: var(--gris) !important; font-weight: 500 !important; }
+.st-key-page [data-testid="stRadioOption"][data-selected="true"] { border-bottom-color: var(--encre); }
+.st-key-page [data-testid="stRadioOption"][data-selected="true"] p { color: var(--encre) !important; font-weight: 600 !important; }
+.st-key-page [data-testid="stRadioOption"]:hover p { color: var(--encre) !important; }
 
-/* Le dossard : l'élément fort de l'accueil */
-.dossard {
-  position: relative;
-  background: #fff;
-  border: 3px solid var(--encre);
-  border-radius: 14px;
-  padding: 26px 34px 22px;
-  text-align: center;
-  box-shadow: 6px 6px 0 var(--piste);
+/* L'élément fort : un grand temps en chiffres fins, comme sur un cadran */
+.chrono { padding: .6rem 0 0; }
+.chrono .legende { color: var(--gris); font-size: .95rem; }
+.chrono .temps {
+  font-weight: 200; font-stretch: 112%; font-size: 7.2rem; line-height: .95; letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums; margin: .5rem 0 .8rem;
 }
-.dossard::before, .dossard::after,
-.dossard .epingle-bas-gauche, .dossard .epingle-bas-droite {
-  content: "";
-  position: absolute;
-  width: 12px; height: 12px;
-  border-radius: 50%;
-  background: var(--gris);
-  border: 2px solid var(--encre);
-}
-.dossard::before { top: 12px; left: 12px; }
-.dossard::after { top: 12px; right: 12px; }
-.dossard .epingle-bas-gauche { bottom: 12px; left: 12px; }
-.dossard .epingle-bas-droite { bottom: 12px; right: 12px; }
-.dossard .bandeau {
-  background: var(--piste);
-  color: #fff;
-  font-family: "Barlow Condensed", sans-serif;
-  font-weight: 700;
-  font-size: 1.1rem;
-  border-radius: 6px;
-  padding: 4px 10px;
-  display: inline-block;
-}
-.dossard .numero {
-  font-family: "Barlow Condensed", sans-serif;
-  font-weight: 800;
-  font-size: 6.2rem;
-  line-height: 1;
-  color: var(--encre);
-  margin: 14px 0 6px;
-  font-variant-numeric: tabular-nums;
-}
-.dossard .sous-titre { color: var(--texte-doux); font-size: 1.05rem; }
+.chrono .details { display: flex; gap: 2.4rem; border-top: 1px solid var(--filet); padding-top: .9rem; }
+.chrono .details div { font-size: .92rem; color: var(--gris); }
+.chrono .details b { display: block; color: var(--encre); font-weight: 600; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
 
-/* Pastilles d'état et de type de séance */
-.pastille {
-  display: inline-block;
-  border-radius: 999px;
-  padding: 3px 12px;
-  font-weight: 600;
-  font-size: .9rem;
-  color: #fff;
-}
-.vert { background: var(--vert); }
-.ambre { background: var(--ambre); color: var(--encre); }
-.rouge { background: var(--rouge); }
+/* Verdict du jour : une ligne, un point de couleur, une jauge fine */
+.verdict { padding: .6rem 0 0 1.6rem; border-left: 1px solid var(--filet); height: 100%; }
+.verdict .etat { display: flex; align-items: center; gap: .6rem; font-size: 1.6rem; font-weight: 500; }
+.verdict .point { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.verdict .jauge { height: 2px; background: var(--filet); margin: 1rem 0 .5rem; }
+.verdict .jauge span { display: block; height: 2px; }
+.verdict .score { font-size: .85rem; color: var(--gris); font-variant-numeric: tabular-nums; }
+.verdict .conseil { font-weight: 600; margin: 1.1rem 0 .3rem; }
+.verdict .raison { color: var(--gris); margin: 0; }
 
-.verdict {
-  border-left: 8px solid var(--vert);
-  background: #fff;
-  border-radius: 10px;
-  padding: 18px 22px;
+/* Carnet d'entraînement : une séance par ligne, colonnes alignées */
+.carnet { width: 100%; border-collapse: collapse; border: none !important; margin: 0; display: table; }
+.carnet td {
+  padding: .95rem .9rem .95rem 0; vertical-align: top; background: transparent !important;
+  border: none !important; border-bottom: 1px solid var(--filet) !important;
 }
-.verdict.ambre-bord { border-left-color: var(--ambre); }
-.verdict.rouge-bord { border-left-color: var(--rouge); }
-.verdict .titre {
-  font-family: "Barlow Condensed", sans-serif;
-  font-weight: 800;
-  font-size: 2.3rem;
-  line-height: 1;
-}
-.score-piste {
-  height: 10px;
-  border-radius: 5px;
-  background: var(--gris);
-  margin: 12px 0 6px;
-  overflow: hidden;
-}
-.score-piste span { display: block; height: 100%; border-radius: 5px; }
+.carnet tr { background: transparent !important; }
+.carnet tr:first-child td { border-top: none !important; }
+.carnet .jour { width: 7.5rem; white-space: nowrap; }
+.carnet .jour b { display: block; font-weight: 600; }
+.carnet .jour span { color: var(--gris); font-size: .9rem; font-variant-numeric: tabular-nums; }
+.carnet .type { width: 11rem; color: var(--gris); font-size: .92rem; }
+.carnet .type i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: .45rem; vertical-align: 1px; }
+.carnet .titre { font-weight: 600; }
+.carnet .description { color: var(--encre); margin-top: .15rem; }
+.carnet .objectif { color: var(--gris); font-size: .9rem; margin-top: .2rem; }
+.carnet .chiffres { width: 13rem; text-align: right; font-variant-numeric: tabular-nums; font-size: .95rem; }
+.carnet .chiffres span { display: block; color: var(--gris); font-size: .88rem; }
 
-/* Séance : une fiche avec un liseré de la couleur du type */
-.seance {
-  background: #fff;
-  border-radius: 10px;
-  border-left: 7px solid var(--piste);
-  padding: 14px 18px;
-  margin-bottom: 10px;
-}
-.seance .jour { font-family: "Barlow Condensed", sans-serif; font-weight: 700; font-size: 1.15rem; color: var(--texte-doux); }
-.seance .titre { font-family: "Barlow Condensed", sans-serif; font-weight: 700; font-size: 1.45rem; color: var(--encre); }
-.seance .chiffres { margin-top: 6px; font-weight: 600; color: var(--encre); font-variant-numeric: tabular-nums; }
-.seance .objectif { color: var(--texte-doux); font-size: .95rem; margin-top: 4px; }
+/* Textes d'explication sous les graphiques */
+.lecture { border-left: 2px solid var(--filet); padding: .1rem 0 .1rem 1.1rem; }
+.donnees { border-left: 2px solid var(--accent); padding: .1rem 0 .1rem 1.1rem; }
+.lecture h4, .donnees h4 { font-size: .92rem !important; font-weight: 600 !important; margin: 0 0 .4rem !important; color: var(--gris) !important; }
+.donnees h4 { color: var(--accent) !important; }
+.lecture p, .donnees li { font-size: .95rem; }
+.donnees ul { padding-left: 1.1rem; margin: 0; }
+.donnees li { margin-bottom: .3rem; }
 
-/* Blocs d'explication sous les graphiques */
-.lecture, .donnees {
-  border-radius: 10px;
-  padding: 14px 18px;
-  height: 100%;
-}
-.lecture { background: var(--piste-clair); }
-.donnees { background: #fff; border: 2px solid var(--piste); }
-.lecture h4, .donnees h4 { margin: 0 0 6px !important; font-size: 1.15rem !important; }
-.lecture p, .donnees li { font-size: .97rem; line-height: 1.5; }
+/* Résumés en colonnes */
+.resume h4 { font-size: .85rem !important; color: var(--gris) !important; font-weight: 500 !important; margin: 0 0 .35rem !important; }
+.resume p { margin: 0; }
 
-[data-testid="stMetricValue"] {
-  font-family: "Barlow Condensed", sans-serif;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
+/* Indicateurs Streamlit */
+[data-testid="stMetric"] { border-top: 1px solid var(--filet); padding-top: .7rem; }
+[data-testid="stMetricLabel"] p { color: var(--gris) !important; font-size: .88rem !important; }
+[data-testid="stMetricValue"] { font-weight: 300 !important; font-size: 2rem !important; font-variant-numeric: tabular-nums; }
+[data-testid="stMetricDelta"] { font-size: .85rem !important; }
 
-@media (max-width: 720px) {
-  .dossard .numero { font-size: 4.2rem; }
-  div[role="radiogroup"][aria-label="Navigation"] { flex-wrap: wrap; }
+/* Formulaires et boutons */
+.stButton button, .stFormSubmitButton button { border-radius: 2px; font-weight: 600; }
+[data-testid="stForm"] { border: 1px solid var(--filet); border-radius: 4px; padding: 1.4rem 1.4rem .6rem; }
+[data-testid="stExpander"] details { border: none; border-top: 1px solid var(--filet); border-radius: 0; }
+[data-testid="stExpander"] summary p { font-weight: 600; }
+[data-testid="stAlert"] { border-radius: 2px; }
+
+@media (max-width: 760px) {
+  .chrono .temps { font-size: 4.6rem; }
+  .verdict { border-left: none; padding-left: 0; margin-top: 1.4rem; }
+  .carnet .type, .carnet .chiffres { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
-TITLES = {"Accueil": "Ta journée de coureur", "Ma forme": "Ma forme", "Nuits & journées": "Nuits & journées",
+TITLES = {"Accueil": "Ta journée", "Ma forme": "Ma forme", "Nuits & journées": "Nuits & journées",
           "Planning": "Mon planning",
           "Prédictions": "Mes prédictions", "Allures": "Mes allures", "Séances": "Mes séances"}
 
@@ -53,7 +53,17 @@ def test_planning_avec_objectif(app_env):
                  "seances_par_semaine": 4, "jours_tennis": "1,3", "jour_sortie_longue": 6}
     at = open_page("Planning", objective)
     assert not at.exception, at.exception
-    assert len(at.expander) >= 8  # une section par semaine jusqu'à la course
+    weeks = [h for h in at.header if h.value.startswith("Semaine")]
+    assert len(weeks) >= 8  # une section par semaine jusqu'à la course
+
+
+def test_bouton_construire_mon_planning(app_env):
+    """Le vrai parcours utilisateur : remplir le formulaire et cliquer sur le bouton."""
+    at = open_page("Planning")
+    next(b for b in at.button if "Construire" in b.label).click().run()
+    assert not at.exception, at.exception
+    assert at.session_state["objectif"]["distance"] == "10k"
+    assert any(h.value.startswith("Semaine") for h in at.header)
 
 
 def test_questionnaire_affiche_puis_enregistre(app_env, tmp_path, monkeypatch):
