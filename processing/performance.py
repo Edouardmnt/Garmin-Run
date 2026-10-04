@@ -68,6 +68,37 @@ def riegel_time_s(known_m: float, known_s: float, target_m: float) -> float:
     return known_s * (target_m / known_m) ** 1.06
 
 
+# --- Dénivelé ------------------------------------------------------------------------------------
+
+# Équivalence de Scarf (2007) : 1 m de montée coûte autant que 7,92 m de plat.
+# Référence : P. Scarf, "Route choice in mountain navigation, Naismith's rule, and the equivalence
+# of distance and climb", Journal of Sports Sciences, 2007.
+SCARF_EQUIVALENCE = 7.92
+MAX_CLIMB_M_PER_KM = 50  # au-delà : trail où l'on marche, la relation effort / vitesse n'est plus comparable
+
+
+def flat_equivalent_m(distance_m, dplus_m):
+    """Distance de plat équivalente à un parcours avec du dénivelé positif."""
+    return distance_m + SCARF_EQUIVALENCE * dplus_m
+
+
+def add_flat_speed(runs: pd.DataFrame) -> pd.DataFrame:
+    """Ajoute le D+ et la vitesse équivalente sur le plat de chaque sortie.
+
+    Priorité à la vitesse ajustée à la pente calculée par Garmin (GAP), précise kilomètre par kilomètre ;
+    sinon, équivalence de Scarf appliquée au D+ total de la sortie.
+    """
+    runs = runs.copy()
+    runs["dplus_m"] = runs["elevation_gain_m"].fillna(0) if "elevation_gain_m" in runs else 0.0
+    moving = runs["moving_duration_s"].fillna(runs["duration_s"]) if "moving_duration_s" in runs else runs["duration_s"]
+    scarf = flat_equivalent_m(runs["distance_m"], runs["dplus_m"]) / moving
+    gap = runs["avg_gap_speed_ms"] if "avg_gap_speed_ms" in runs else pd.Series(np.nan, index=runs.index)
+    runs["flat_speed_ms"] = gap.where(gap > 0, scarf)
+    runs["flat_source"] = np.where(gap > 0, "gap_garmin", "scarf")
+    runs["climb_m_per_km"] = runs["dplus_m"] / (runs["distance_m"] / 1000)
+    return runs
+
+
 # --- Performances personnelles -------------------------------------------------------------------
 
 HARD_SESSIONS = {"course", "tempo", "fractionne"}  # seuls efforts assez intenses pour refléter la capacité
@@ -106,16 +137,21 @@ def collect_performances(activities: pd.DataFrame, labels: pd.DataFrame | None =
 
     for _, r in runs[runs["kind"] == "course"].iterrows():
         distance, time_s = race_effort(r)
-        rows.append({"date": r["date"], "distance_m": distance, "time_s": time_s, "source": "course"})
+        dplus = (r.get("elevation_gain_m") or 0) * distance / r["distance_m"]  # D+ au prorata de la portion
+        rows.append({"date": r["date"], "distance_m": flat_equivalent_m(distance, dplus), "time_s": time_s,
+                     "source": "course", "dplus_m": round(dplus)})
 
     hard = runs[runs["kind"].isin(HARD_SESSIONS - {"course"})]
     for col, dist in (("fastest_5k_s", 5000.0), ("fastest_10k_s", 10000.0)):
         if col in hard:
             for _, r in hard[hard[col].notna()].iterrows():
                 source = f"meilleur {int(dist / 1000)} km ({r['kind']})"
-                rows.append({"date": r["date"], "distance_m": dist, "time_s": r[col], "source": source})
+                dplus = (r.get("elevation_gain_m") or 0) * dist / r["distance_m"]
+                rows.append({"date": r["date"], "distance_m": flat_equivalent_m(dist, dplus), "time_s": r[col],
+                             "source": source, "dplus_m": round(dplus)})
 
-    perf = pd.DataFrame(rows, columns=["date", "distance_m", "time_s", "source"])
+    # distance_m est une distance ÉQUIVALENTE SUR LE PLAT (D+ converti par l'équivalence de Scarf)
+    perf = pd.DataFrame(rows, columns=["date", "distance_m", "time_s", "source", "dplus_m"])
     if perf.empty:
         return perf.assign(vdot=pd.Series(dtype=float))
     pace = perf["time_s"] / (perf["distance_m"] / 1000)
@@ -136,17 +172,18 @@ def hr_speed_vo2max(activities: pd.DataFrame, labels: pd.DataFrame | None, hr_re
 
     Principe : le % de réserve cardiaque est proche du % de réserve de VO2 (relation de Swain).
     Le coût en O2 de la vitesse moyenne (formule de Daniels) rapporté à ce % donne une VO2 max.
-    Exclusions : fractionné (moyennes trompeuses), sorties trop courtes ou trop faciles, terrain très vallonné.
+    Le dénivelé est converti en vitesse équivalente sur le plat (GAP Garmin, sinon équivalence de Scarf).
+    Exclusions : fractionné (moyennes trompeuses), sorties trop courtes ou trop faciles, trail très raide.
     """
     usable = (activities["sport"] == "running") & activities["avg_hr"].notna() & activities["avg_speed_ms"].notna()
     runs = activities[usable].copy()
     runs["kind"] = runs["activity_id"].map(session_types(labels))
     runs = runs[(runs["duration_s"] >= 15 * 60) & (runs["distance_m"] >= 2000) & (runs["kind"] != "fractionne")]
-    climb = runs["elevation_gain_m"].fillna(0) / (runs["distance_m"] / 1000)
-    runs = runs[climb <= 20]  # moins de 20 m de dénivelé par km
+    runs = add_flat_speed(runs)
+    runs = runs[runs["climb_m_per_km"] <= MAX_CLIMB_M_PER_KM]  # le dénivelé est corrigé, sauf trail très raide
     reserve = (runs["avg_hr"] - hr_rest) / (hr_max - hr_rest)
     runs = runs[reserve.between(0.5, 0.97)].assign(reserve=reserve)
-    vo2 = runs["avg_speed_ms"].mul(60).map(vo2_at_speed)
+    vo2 = runs["flat_speed_ms"].mul(60).map(vo2_at_speed)  # vitesse équivalente sur le plat
     runs["vo2max"] = 3.5 + (vo2 - 3.5) / runs["reserve"]  # 3,5 ml/kg/min : consommation au repos
     runs["date"] = pd.to_datetime(runs["start_time"]).dt.normalize()
     return runs[["date", "vo2max", "reserve", "kind"]].sort_values("date").reset_index(drop=True)
@@ -236,7 +273,9 @@ def recent_runs(activities: pd.DataFrame, labels: pd.DataFrame | None, today: da
     runs = runs[runs["date"] >= pd.Timestamp(today) - pd.Timedelta(days=window_days)]
     runs["kind"] = runs["activity_id"].map(session_types(labels))
     moving = runs["moving_duration_s"].fillna(runs["duration_s"]) if "moving_duration_s" in runs else runs["duration_s"]
-    runs["pace_s"] = moving / (runs["distance_m"] / 1000)
+    runs["raw_pace_s"] = moving / (runs["distance_m"] / 1000)  # allure réelle, dénivelé compris
+    runs = add_flat_speed(runs)
+    runs["pace_s"] = 1000 / runs["flat_speed_ms"]  # allure équivalente sur le plat : comparable d'une sortie à l'autre
     return runs[runs["pace_s"].between(MIN_PACE_S, MAX_PACE_S)]
 
 
@@ -256,6 +295,8 @@ def observed_paces(runs: pd.DataFrame, hr_max: float) -> dict:
             "allure_lente": format_time(paces.quantile(0.75)) + "/km",
             "allure_mediane": format_time(paces.median()) + "/km",
             "allure_mediane_s": round(float(paces.median())),
+            "allure_reelle_mediane": format_time(g["raw_pace_s"].median()) + "/km",
+            "dplus_median_m": round(float(g["dplus_m"].median())),
             "fc_moyenne": None if hr.empty else round(float(hr.median())),
             "fc_fourchette": None if hr.empty else [round(float(hr.quantile(0.25))), round(float(hr.quantile(0.75)))],
             "fc_pct_max": None if hr.empty else round(float(hr.median()) / hr_max * 100),

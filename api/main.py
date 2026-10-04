@@ -22,6 +22,7 @@ from processing.performance import (
     day_adjustment,
     day_state,
     estimate_vdot,
+    flat_equivalent_m,
     format_time,
     garmin_predictions,
     hr_speed_vo2max,
@@ -110,8 +111,12 @@ def forme() -> dict:
 def predictions(
     distance: Literal["5k", "10k", "semi", "marathon", "toutes"] = "toutes",
     ajuster_au_jour: bool = Query(True, description="Appliquer l'état du jour (nuit, fatigue accumulée)"),
+    denivele_m: int = Query(0, ge=0, le=5000, description="D+ total du parcours visé, en mètres"),
 ) -> dict:
-    """Temps prédits : temps de base (forme de fond) et temps ajusté à la forme du jour."""
+    """Temps prédits : temps de base (forme de fond) et temps ajusté à la forme du jour.
+
+    Avec `denivele_m`, le temps tient compte du D+ du parcours ; `temps_plat` reste fourni pour comparaison.
+    """
     gold, perf, estimate = current_estimate()
     state = day_state(gold)
     adj, reasons = day_adjustment(state) if ajuster_au_jour else (0.0, ["Ajustement du jour désactivé"])
@@ -120,9 +125,12 @@ def predictions(
     targets = DISTANCES_M if distance == "toutes" else {distance: DISTANCES_M[distance]}
     results = {}
     for name, meters in targets.items():
-        base = predict_time_s(estimate["vdot"], meters)
+        flat = predict_time_s(estimate["vdot"], meters)
+        # Parcours vallonné : temps d'un parcours plat de distance équivalente (équivalence de Scarf)
+        base = predict_time_s(estimate["vdot"], flat_equivalent_m(meters, denivele_m)) if denivele_m else flat
         adjusted = base * (1 + adj)
         results[name] = {
+            "temps_plat": format_time(flat),
             "temps_base": format_time(base),
             "temps_ajuste": format_time(adjusted),
             "allure_course": pace_txt(adjusted / (meters / 1000)),
@@ -138,8 +146,12 @@ def predictions(
     if distance in ("semi", "marathon", "toutes") and (recent.empty or recent["distance_m"].max() < 15000):
         warnings.append("Peu d'efforts longs récents : le semi et le marathon supposent une endurance spécifique.")
 
+    if denivele_m:
+        warnings.append(f"D+ de {denivele_m} m converti en distance de plat équivalente (1 m de montée = 7,92 m de plat).")
+        warnings.append("La prédiction de la montre suppose un parcours plat.")
     return {
         "vdot": round(estimate["vdot"], 1),
+        "denivele_m": denivele_m,
         "estimation": estimate["composantes"],
         "ajustement_du_jour_pct": round(adj * 100, 1),
         "explications_ajustement": reasons,

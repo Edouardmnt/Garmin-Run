@@ -57,6 +57,9 @@ def build_activities() -> pd.DataFrame:
             "moving_duration_s": a.get("movingDuration"),
             "distance_m": a.get("distance"),
             "elevation_gain_m": a.get("elevationGain"),
+            "elevation_loss_m": a.get("elevationLoss"),
+            # Vitesse ajustée à la pente (GAP) calculée par Garmin, quand la montre la fournit
+            "avg_gap_speed_ms": a.get("avgGradeAdjustedSpeed"),
             "avg_speed_ms": a.get("averageSpeed"),
             "avg_hr": a.get("averageHR"),
             "max_hr": a.get("maxHR"),

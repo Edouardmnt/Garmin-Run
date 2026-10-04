@@ -9,6 +9,7 @@ from processing.performance import (
     collect_performances,
     day_adjustment,
     estimate_vdot,
+    flat_equivalent_m,
     garmin_predictions,
     hr_speed_vo2max,
     pace_at_fraction,
@@ -106,7 +107,8 @@ def test_vo2max_par_relation_fc_vitesse_sur_un_footing():
         "duration_s": 3000, "avg_hr": 155.0, "avg_speed_ms": 200 / 60, "elevation_gain_m": 40,
     }])
     est = hr_speed_vo2max(acts, labels({1: "ef"}), hr_rest=50, hr_max=190)
-    expected = 3.5 + (vo2_at_speed(200) - 3.5) / 0.75
+    flat_speed_m_min = flat_equivalent_m(10000, 40) / 50  # 40 m de D+ convertis en distance de plat
+    expected = 3.5 + (vo2_at_speed(flat_speed_m_min) - 3.5) / 0.75
     assert est["vo2max"].iloc[0] == pytest.approx(expected, abs=0.01)
     # Le fractionné est exclu : ses moyennes mélangent efforts et récupérations
     assert hr_speed_vo2max(acts, labels({1: "fractionne"}), 50, 190).empty
@@ -156,3 +158,34 @@ def test_allures_observees_et_recommandation():
     model_ef = ef["modele_fc"]
     assert model_ef["allure_rapide"] < model_ef["allure_lente"]
     assert paces["allure_max"]["meilleur_1km"] == "3'55\"/km"
+
+
+# --- Dénivelé ------------------------------------------------------------------------------------
+
+def test_equivalence_de_scarf():
+    assert flat_equivalent_m(10000, 100) == pytest.approx(10792)
+
+
+def test_une_sortie_vallonnee_n_est_plus_penalisee():
+    # Même effort cardiaque, même temps : 10 km plats, ou 10 km avec 150 m de D+ (donc plus durs)
+    base = {"activity_id": 1, "sport": "running", "start_time": "2026-09-28 08:00", "distance_m": 10000,
+            "duration_s": 3000, "avg_hr": 155.0, "avg_speed_ms": 10000 / 3000}
+    flat = hr_speed_vo2max(pd.DataFrame([{**base, "elevation_gain_m": 0}]), labels({1: "ef"}), 50, 190)
+    hilly = hr_speed_vo2max(pd.DataFrame([{**base, "elevation_gain_m": 150}]), labels({1: "ef"}), 50, 190)
+    assert hilly["vo2max"].iloc[0] > flat["vo2max"].iloc[0]  # courir aussi vite en côte demande plus de capacité
+
+
+def test_le_gap_garmin_est_prioritaire():
+    base = {"activity_id": 1, "sport": "running", "start_time": "2026-09-28 08:00", "distance_m": 10000,
+            "duration_s": 3000, "avg_hr": 155.0, "avg_speed_ms": 10000 / 3000, "elevation_gain_m": 150}
+    with_gap = hr_speed_vo2max(pd.DataFrame([{**base, "avg_gap_speed_ms": 3.5}]), labels({1: "ef"}), 50, 190)
+    expected = 3.5 + (vo2_at_speed(3.5 * 60) - 3.5) / ((155 - 50) / 140)
+    assert with_gap["vo2max"].iloc[0] == pytest.approx(expected, abs=0.01)
+
+
+def test_course_vallonnee_convertie_en_plat():
+    acts = pd.DataFrame([{"activity_id": 1, "sport": "running", "start_time": "2026-09-28 09:00", "distance_m": 10000,
+                          "duration_s": 3000, "elevation_gain_m": 120, "fastest_10k_s": 3000.0}])
+    perf = collect_performances(acts, labels({1: "course"}))
+    assert perf["distance_m"].iloc[0] == pytest.approx(flat_equivalent_m(10000, 120))
+    assert perf["vdot"].iloc[0] > vdot(10000, 3000)  # 50 min avec du D+ vaut mieux que 50 min sur le plat

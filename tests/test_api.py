@@ -58,3 +58,10 @@ def test_allures_et_seances(client):
     assert set(body["zones"]) == {"ef", "tempo", "fractionne"}
     assert all(z["recommandation"]["allure_rapide"] for z in body["zones"].values())
     assert len(client.get("/seances", params={"limite": 3}).json()["seances"]) == 3
+
+
+def test_predictions_avec_denivele(client):
+    flat = client.get("/predictions", params={"distance": "10k", "ajuster_au_jour": False}).json()
+    hilly = client.get("/predictions", params={"distance": "10k", "ajuster_au_jour": False, "denivele_m": 200}).json()
+    assert hilly["predictions"]["10k"]["temps_base_s"] > flat["predictions"]["10k"]["temps_base_s"]
+    assert hilly["predictions"]["10k"]["temps_plat"] == flat["predictions"]["10k"]["temps_plat"]
