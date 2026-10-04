@@ -18,13 +18,25 @@ from fastapi import Body, FastAPI, HTTPException, Query
 
 from processing.feedback import (
     apply_feedback_labels,
+    efforts_by_activity,
     load_feedback,
     pending_run,
+    prediction_bias,
     questions_for,
     recent_signals,
     save_feedback,
     summary,
     validate,
+)
+from processing.goals import (
+    active_goal,
+    create_goal,
+    delete_goal,
+    goal_km,
+    goal_label,
+    load_goals,
+    set_active,
+    validate_goal,
 )
 from processing.insights import build_analysis
 from processing.nutrition import race_nutrition
@@ -43,7 +55,8 @@ from processing.performance import (
     recent_runs,
     vo2max_history,
 )
-from processing.planning import build_plan
+from processing.planning import build_plan, category_for
+from processing.watch import load_history, send_session, to_garmin_workout
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.getenv("RUNLAB_DATA_DIR", ROOT / "data"))
@@ -89,21 +102,53 @@ def reference_day(gold: pd.DataFrame) -> date:
     return pd.to_datetime(gold["date"]).max().date()
 
 
-def current_estimate():
+def estimation_inputs():
+    """Données nécessaires à l'estimation du niveau : performances et sources physiologiques."""
     gold = read_parquet("gold/daily_features.parquet")
     activities = read_parquet("silver/activities.parquet")
     labels = read_labels()
-    perf = collect_performances(activities, labels)
+    perf = collect_performances(activities, labels, efforts_by_activity(load_feedback(DATA_DIR)))
     hr_max = float(activities["max_hr"].max())
     hr_rest = float(gold["resting_hr"].median())
     physio = {
         "vo2max_montre": vo2max_history(activities),
         "relation_fc_vitesse": hr_speed_vo2max(activities, labels, hr_rest, hr_max),
     }
+    return gold, perf, physio
+
+
+def estimate_on(day: date, perf: pd.DataFrame, physio: dict) -> dict | None:
+    """Niveau estimé tel qu'il était connu à une date : seules les données antérieures sont utilisées."""
+    limit = pd.Timestamp(day)
+    past = {name: series[series["date"] <= limit] for name, series in physio.items()}
+    return estimate_vdot(perf[perf["date"] <= limit], past, day)
+
+
+def current_estimate():
+    gold, perf, physio = estimation_inputs()
     estimate = estimate_vdot(perf, physio, reference_day(gold))
     if estimate is None:
         raise HTTPException(404, "Ni VO2 max récente ni performance exploitable : impossible d'estimer ta forme.")
     return gold, perf, estimate
+
+
+def feedback_bias() -> tuple[float, int]:
+    """Correction des temps prédits déclarée dans les questionnaires d'après-course (en %)."""
+    return prediction_bias(load_feedback(DATA_DIR))
+
+
+def race_time_s(vdot: float, meters: float, denivele_m: int = 0, bias_pct: float | None = None) -> float:
+    """Temps prédit sur une distance : VDOT, D+ (équivalence de Scarf), correction des questionnaires."""
+    bias = feedback_bias()[0] if bias_pct is None else bias_pct
+    return predict_time_s(vdot, flat_equivalent_m(meters, denivele_m)) * (1 + bias / 100)
+
+
+def distance_from(distance: str, distance_km: float | None) -> tuple[str, float, str]:
+    """(clé, mètres, libellé) : distance classique, ou distance libre en km si elle est fournie."""
+    if distance_km:
+        return "personnalisee", distance_km * 1000, f"{distance_km:g} km".replace(".", ",")
+    labels = {"5k": "5 km", "10k": "10 km", "semi": "semi-marathon", "marathon": "marathon"}
+    return distance, DISTANCES_M[distance], labels[distance]
 
 
 def read_garmin_predictions() -> dict:
@@ -138,6 +183,7 @@ def predictions(
     distance: Literal["5k", "10k", "semi", "marathon", "toutes"] = "toutes",
     ajuster_au_jour: bool = Query(True, description="Appliquer l'état du jour (nuit, fatigue accumulée)"),
     denivele_m: int = Query(0, ge=0, le=5000, description="D+ total du parcours visé, en mètres"),
+    distance_km: float | None = Query(None, ge=1, le=100, description="Distance libre en km (remplace `distance`)"),
 ) -> dict:
     """Temps prédits : temps de base (forme de fond) et temps ajusté à la forme du jour.
 
@@ -148,12 +194,16 @@ def predictions(
     adj, reasons = day_adjustment(state) if ajuster_au_jour else (0.0, ["Ajustement du jour désactivé"])
     garmin = read_garmin_predictions()
 
-    targets = DISTANCES_M if distance == "toutes" else {distance: DISTANCES_M[distance]}
+    bias, n_answers = feedback_bias()
+    if distance_km:
+        targets = {"personnalisee": distance_km * 1000}
+    else:
+        targets = DISTANCES_M if distance == "toutes" else {distance: DISTANCES_M[distance]}
     results = {}
     for name, meters in targets.items():
-        flat = predict_time_s(estimate["vdot"], meters)
+        flat = race_time_s(estimate["vdot"], meters, 0, bias)
         # Parcours vallonné : temps d'un parcours plat de distance équivalente (équivalence de Scarf)
-        base = predict_time_s(estimate["vdot"], flat_equivalent_m(meters, denivele_m)) if denivele_m else flat
+        base = race_time_s(estimate["vdot"], meters, denivele_m, bias)
         adjusted = base * (1 + adj)
         results[name] = {
             "temps_plat": format_time(flat),
@@ -172,12 +222,17 @@ def predictions(
     if distance in ("semi", "marathon", "toutes") and (recent.empty or recent["distance_m"].max() < 15000):
         warnings.append("Peu d'efforts longs récents : le semi et le marathon supposent une endurance spécifique.")
 
+    if bias:
+        sens = "allongés" if bias > 0 else "raccourcis"
+        warnings.append(f"Temps {sens} de {abs(bias):.1f} % d'après tes réponses aux questionnaires après course "
+                        f"({n_answers} réponse(s) sur la justesse des prédictions).".replace(".", ",", 1))
     if denivele_m:
         warnings.append(f"D+ de {denivele_m} m converti en distance de plat équivalente (1 m de montée = 7,92 m de plat).")
         warnings.append("La prédiction de la montre suppose un parcours plat.")
     return {
         "vdot": round(estimate["vdot"], 1),
         "denivele_m": denivele_m,
+        "correction_questionnaires_pct": bias,
         "estimation": estimate["composantes"],
         "ajustement_du_jour_pct": round(adj * 100, 1),
         "explications_ajustement": reasons,
@@ -261,6 +316,7 @@ def planning(
     jours_tennis: str = Query("", description="Jours de tennis, 0 = lundi ... 6 = dimanche, ex. 1,3"),
     jour_sortie_longue: int = Query(6, ge=0, le=6, description="0 = lundi ... 6 = dimanche"),
     denivele_m: int = Query(0, ge=0, le=5000, description="D+ du parcours de la course"),
+    distance_km: float | None = Query(None, ge=1, le=100, description="Distance libre en km (remplace `distance`)"),
 ) -> dict:
     """Plan d'entraînement jusqu'à la course : phases, séances détaillées, allures et FC personnelles."""
     gold, _, estimate = current_estimate()
@@ -282,15 +338,18 @@ def planning(
                  "fc_cible": z["recommandation"]["fc_cible"]} for k, z in zones.items()}
     recent = runs[runs["date"] >= pd.Timestamp(today - timedelta(days=28))]
     base_km = float(recent["distance_m"].sum() / 1000 / 4)
-    meters = DISTANCES_M[distance]
-    race_time = predict_time_s(estimate["vdot"], flat_equivalent_m(meters, denivele_m))
+    key, meters, label = distance_from(distance, distance_km)
+    family = category_for(meters / 1000) if distance_km else distance
+    race_time = race_time_s(estimate["vdot"], meters, denivele_m)
     state = full_state(gold)
     verdict = build_analysis(gold, [], state)["verdict"]
     factor, ef_shift, adaptations = personalisation(gold, state)
-    plan = build_plan(today, distance, date_course, seances_par_semaine, tennis, jour_sortie_longue,
-                      base_km, paces, race_time / (meters / 1000), verdict["niveau"], factor, ef_shift)
+    plan = build_plan(today, family, date_course, seances_par_semaine, tennis, jour_sortie_longue,
+                      base_km, paces, race_time / (meters / 1000), verdict["niveau"], factor, ef_shift,
+                      race_km=meters / 1000, race_label=label)
     return {
-        "objectif": {"distance": distance, "date_course": None if date_course is None else date_course.isoformat(),
+        "objectif": {"distance": key, "distance_km": round(meters / 1000, 3), "libelle": label,
+                     "date_course": None if date_course is None else date_course.isoformat(),
                      "temps_vise": format_time(race_time), "allure_course": pace_txt(race_time / (meters / 1000)),
                      "denivele_m": denivele_m},
         "volume_actuel_km_semaine": round(base_km, 1),
@@ -298,6 +357,138 @@ def planning(
         "personnalisation": adaptations,
         **plan,
     }
+
+
+# --- Objectifs ------------------------------------------------------------------------------------
+
+def goal_status(goal: dict, estimate: dict, today: date) -> dict:
+    """Où en est un objectif : jours restants, temps prédit aujourd'hui, écart au temps visé."""
+    predicted = race_time_s(estimate["vdot"], goal_km(goal) * 1000, goal["denivele_m"])
+    days_left = (date.fromisoformat(goal["date_course"]) - today).days
+    out = {**goal, "libelle": goal_label(goal), "distance_km": goal_km(goal), "jours_restants": days_left,
+           "temps_predit": format_time(predicted),
+           "temps_predit_s": round(predicted), "temps_vise": None, "ecart_s": None, "statut": "sans temps visé"}
+    if goal.get("temps_vise_s"):
+        gap = predicted - goal["temps_vise_s"]
+        out.update({"temps_vise": format_time(goal["temps_vise_s"]), "ecart_s": round(gap),
+                    "ecart_pct": round(gap / goal["temps_vise_s"] * 100, 1),
+                    "statut": "dans les temps" if gap <= 0 else "proche" if gap <= 0.02 * goal["temps_vise_s"]
+                    else "en retard"})
+    if days_left < 0:
+        out["statut"] = "course passée"
+    return out
+
+
+@app.get("/objectifs", tags=["objectifs"])
+def objectifs() -> dict:
+    """Tous tes objectifs, avec où tu en es pour chacun."""
+    gold, _, estimate = current_estimate()
+    today = reference_day(gold)
+    goals = sorted(load_goals(DATA_DIR), key=lambda g: g["date_course"])
+    return {"objectifs": [goal_status(g, estimate, today) for g in goals]}
+
+
+@app.post("/objectifs", tags=["objectifs"])
+def nouvel_objectif(objectif: dict = Body(..., embed=True)) -> dict:
+    """Crée un objectif (nom, distance, date_course, temps_vise, denivele_m, seances_par_semaine,
+    jours_tennis, jour_sortie_longue). Il devient l'objectif actif."""
+    gold = read_parquet("gold/daily_features.parquet")
+    errors = validate_goal(objectif, reference_day(gold))
+    if errors:
+        raise HTTPException(422, errors)
+    return {"objectif": create_goal(DATA_DIR, objectif)}
+
+
+@app.post("/objectifs/{goal_id}/activer", tags=["objectifs"])
+def activer_objectif(goal_id: str) -> dict:
+    goal = set_active(DATA_DIR, goal_id)
+    if goal is None:
+        raise HTTPException(404, "Objectif introuvable.")
+    return {"objectif": goal}
+
+
+@app.delete("/objectifs/{goal_id}", tags=["objectifs"])
+def supprimer_objectif(goal_id: str) -> dict:
+    if not delete_goal(DATA_DIR, goal_id):
+        raise HTTPException(404, "Objectif introuvable.")
+    return {"supprime": goal_id}
+
+
+@app.get("/objectifs/{goal_id}/suivi", tags=["objectifs"])
+def suivi_objectif(goal_id: str, semaines: int = Query(12, ge=2, le=52)) -> dict:
+    """Évolution, semaine après semaine, de ton temps prédit sur la course visée, face au temps visé."""
+    goal = next((g for g in load_goals(DATA_DIR) if g["id"] == goal_id), None)
+    if goal is None:
+        raise HTTPException(404, "Objectif introuvable.")
+    gold, perf, physio = estimation_inputs()
+    today = reference_day(gold)
+    bias = feedback_bias()[0]
+    points = []
+    for weeks_ago in range(semaines - 1, -1, -1):
+        day = today - timedelta(weeks=weeks_ago)
+        estimate = estimate_on(day, perf, physio)
+        if estimate:
+            t = race_time_s(estimate["vdot"], goal_km(goal) * 1000, goal["denivele_m"], bias)
+            points.append({"date": day.isoformat(), "temps_predit_s": round(t), "temps_predit": format_time(t)})
+    return {"objectif": goal_status(goal, current_estimate()[2], today), "evolution": points}
+
+
+# --- Planning de l'objectif actif et montre -------------------------------------------------------
+
+@app.get("/planning/actif", tags=["planning"])
+def planning_actif() -> dict:
+    """Planning de l'objectif actif ; sans objectif, deux semaines de développement général."""
+    gold = read_parquet("gold/daily_features.parquet")
+    goal = active_goal(DATA_DIR, reference_day(gold))
+    if goal is None:
+        return {**planning(distance="10k", date_course=None, seances_par_semaine=3, jours_tennis="",
+                           jour_sortie_longue=6, denivele_m=0, distance_km=None), "objectif_actif": None}
+    preset = goal.get("distance") in DISTANCES_M
+    plan = planning(distance=goal["distance"] if preset else "10k", date_course=date.fromisoformat(goal["date_course"]),
+                    seances_par_semaine=goal["seances_par_semaine"],
+                    jours_tennis=",".join(str(d) for d in goal["jours_tennis"]),
+                    jour_sortie_longue=goal["jour_sortie_longue"], denivele_m=goal["denivele_m"],
+                    distance_km=None if preset else goal_km(goal))
+    return {**plan, "objectif_actif": goal}
+
+
+def today_date() -> date:
+    """La vraie date du jour (remplaçable dans les tests)."""
+    return date.today()
+
+
+def todays_session() -> dict | None:
+    """Séance prévue à la VRAIE date du jour, même si la dernière synchronisation date d'hier."""
+    today = today_date().isoformat()
+    plan = planning_actif()
+    return next((s for w in plan["semaines"] for s in w["seances"] if s["date"] == today), None)
+
+
+@app.get("/montre/seance-du-jour", tags=["montre"])
+def seance_du_jour() -> dict:
+    """La séance du jour, telle qu'elle sera envoyée à la montre, et l'historique des envois."""
+    session = todays_session()
+    return {"seance": session, "entrainement_garmin": None if session is None else to_garmin_workout(session),
+            "envois": load_history(DATA_DIR)}
+
+
+@app.post("/montre/envoyer", tags=["montre"])
+def envoyer_a_la_montre() -> dict:
+    """Place la séance du jour dans ton calendrier Garmin ; ta montre l'affiche à sa prochaine synchronisation."""
+    session = todays_session()
+    if session is None:
+        return {"statut": "repos", "message": "Pas de séance de course prévue aujourd'hui."}
+    from ingestion.garmin_export import connect
+
+    try:
+        client = connect()
+    except Exception as exc:
+        raise HTTPException(502, f"Connexion à Garmin Connect impossible : {exc}") from exc
+    result = send_session(client, session, DATA_DIR)
+    messages = {"envoyee": "Séance envoyée dans ton calendrier Garmin.",
+                "remplacee": "La séance du jour a changé : la précédente a été remplacée.",
+                "deja_envoyee": "Cette séance est déjà dans ton calendrier Garmin."}
+    return {**result, "message": messages[result["statut"]]}
 
 
 @app.get("/questionnaire", tags=["questionnaire"])
@@ -346,12 +537,12 @@ def nutrition(
     distance: Literal["5k", "10k", "semi", "marathon"] = "semi",
     temperature_c: float = Query(15, ge=-10, le=45, description="Température prévue le jour de la course"),
     denivele_m: int = Query(0, ge=0, le=5000),
+    distance_km: float | None = Query(None, ge=1, le=100, description="Distance libre en km (remplace `distance`)"),
 ) -> dict:
     """Nutrition et hydratation avant, pendant et après la course, selon ta durée prévue et la température."""
     _, _, estimate = current_estimate()
-    meters = DISTANCES_M[distance]
-    duration_s = predict_time_s(estimate["vdot"], flat_equivalent_m(meters, denivele_m))
-    label = {"5k": "5 km", "10k": "10 km", "semi": "semi-marathon", "marathon": "marathon"}[distance]
+    _, meters, label = distance_from(distance, distance_km)
+    duration_s = race_time_s(estimate["vdot"], meters, denivele_m)
     plan = race_nutrition(label, duration_s / 60, duration_s / (meters / 1000), temperature_c)
     return {"distance": distance, "temps_prevu": format_time(duration_s), **plan}
 

@@ -1,8 +1,10 @@
-# Garmin-Run — charge d'entraînement et récupération multisport
+# Foulée — charge d'entraînement, récupération et préparation de course
 
 [![CI](https://github.com/Edouardmnt/Garmin-Run/actions/workflows/ci.yml/badge.svg)](https://github.com/Edouardmnt/Garmin-Run/actions/workflows/ci.yml)
 
 Projet personnel de data engineering et d'IA, construit **de bout en bout** à partir de mes propres données de montre Garmin : ingestion, data lake en couches, indicateurs d'entraînement, exploration, puis (à venir) modèle de récupération, conteneurisation, CI/CD, déploiement Kubernetes et coach IA.
+
+*Foulée* est le nom de l'application ; le dépôt garde son nom d'origine. Le projet n'est ni affilié ni approuvé par Garmin : il utilise les données de l'utilisateur via la bibliothèque non officielle python-garminconnect.
 
 **La question de départ :** ma charge d'entraînement (course, tennis, musculation) a-t-elle un effet mesurable sur ma récupération, et peut-on la prédire ?
 
@@ -87,6 +89,7 @@ docker run --rm -v "$(pwd)/data:/data" garmin-run process  # vos données brutes
 | `process` | silver → gold à partir des données brutes existantes |
 | `train` | entraînement et évaluation du modèle de récupération |
 | `transfer` | expérience de transfert avec LifeSnaps (si le fichier est présent dans le volume) |
+| `matin` | `sync`, puis envoi de la séance du jour sur la montre |
 
 Le mode `sync` lit sa configuration dans des variables d'environnement (`GARMIN_DAYS`, `GARMINTOKENS`, `GARMIN_EMAIL`, `GARMIN_PASSWORD`) : aucun identifiant n'est inclus dans l'image. La synchronisation est **incrémentale** : elle repart du dernier jour déjà téléchargé (*watermark*) et récupère tous les jours manquants, que la dernière exécution date d'hier ou de plusieurs semaines. Les activités sont fusionnées avec l'historique, sans doublon.
 
@@ -100,7 +103,7 @@ Le dossier `k8s/` déploie la synchronisation quotidienne sur un cluster (testé
 | `PersistentVolumeClaim` `garmin-data` | Volume persistant pour `/data` (bronze, silver, gold, jetons) |
 | `ConfigMap` `garmin-config` | Configuration non sensible (profondeur du chargement initial, chemins) |
 | `Secret` `garmin-credentials` | Identifiants de secours, optionnel, jamais versionné |
-| `CronJob` `garmin-sync` | Pipeline `sync` chaque matin à 6 h (Europe/Paris), sans chevauchement, une seule nouvelle tentative, rattrapage jusqu'à 7 jours |
+| `CronJob` `garmin-sync` | Pipeline `matin` chaque jour à 6 h (Europe/Paris) : synchronisation, transformations, séance du jour envoyée sur la montre ; sans chevauchement, une seule nouvelle tentative, rattrapage jusqu'à 7 jours |
 
 ```bash
 kubectl apply -f k8s/
@@ -185,16 +188,29 @@ L'export utilise la bibliothèque non officielle [python-garminconnect](https://
 
 ---
 
+## Objectifs et séances envoyées sur la montre
+
+**Objectifs** (`processing/goals.py`) : chaque course visée est enregistrée avec sa distance (5 km, 10 km, semi, marathon, ou toute distance libre entre 1 et 100 km), sa date, son temps visé, son D+, le nombre de sorties par semaine, les jours de tennis et le jour de la sortie longue. L'objectif actif pilote le planning. Pour chacun, l'application suit le compte à rebours, l'écart entre le temps prédit et le temps visé, et l'évolution du temps prédit semaine après semaine, recalculée avec les seules données connues à chaque date.
+
+**Montre** (`processing/watch.py`, `ingestion/garmin_push.py`) : chaque séance du planning possède des étapes structurées (échauffement, répétitions, récupérations, retour au calme) avec une cible d'allure. Chaque matin, après la synchronisation, le CronJob (mode `matin`) convertit la séance du jour, déjà adaptée à la forme du jour, en entraînement Garmin et la place dans le calendrier Garmin Connect : la montre l'affiche comme entraînement du jour. Une séance inchangée n'est jamais renvoyée ; une séance modifiée remplace la précédente. L'envoi peut aussi se faire depuis l'accueil.
+
+| Point d'accès | Rôle |
+|---|---|
+| `GET/POST /objectifs`, `POST /objectifs/{id}/activer`, `DELETE /objectifs/{id}` | Gestion des objectifs |
+| `GET /objectifs/{id}/suivi` | Évolution du temps prédit face au temps visé |
+| `GET /planning/actif` | Planning de l'objectif actif |
+| `GET /montre/seance-du-jour`, `POST /montre/envoyer` | Séance du jour au format Garmin, et envoi au calendrier |
+
 ## Questionnaire après chaque sortie
 
 Après chaque sortie de course, l'accueil propose 3 à 5 questions (4 pour un footing, 5 pour une séance de qualité ou une course). Les réponses améliorent directement l'application :
 
 | Question | Ce que la réponse change |
 |---|---|
-| Type de séance | Devient l'étiquette de la sortie : classification, allures observées, chronos de référence |
-| Effort ressenti | Des footings ressentis comme difficiles ralentissent les allures d'endurance du planning |
+| Type de séance | Devient l'étiquette de la sortie : une « course » sert de chrono de référence pour les prédictions et leur calibrage |
+| Effort ressenti | Une sortie courue sans forcer (moins de 7/10) est écartée des performances ; des footings ressentis comme difficiles ralentissent les allures d'endurance |
 | Douleur | Plafonne le verdict du jour et réduit le volume du planning |
-| Temps prédit ou allure conseillée | Mesure la justesse des prédictions et des allures (`/questionnaire/bilan`) |
+| Temps prédit ou allure conseillée | Corrige les temps prédits (jusqu'à ±3 %, d'après les 5 dernières réponses) et mesure la justesse des allures (`/questionnaire/bilan`) |
 | Forme avant le départ | Vérifie que le verdict du jour correspond au ressenti |
 
 ## Nutrition et hydratation
@@ -313,7 +329,8 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 
 ```
 ├── ingestion/
-│   └── garmin_export.py         # export Garmin Connect -> data/raw (bronze)
+│   ├── garmin_export.py         # export Garmin Connect -> data/raw (bronze)
+│   └── garmin_push.py           # envoi de la séance du jour sur la montre
 ├── processing/
 │   ├── build_silver.py          # bronze -> silver (Parquet)
 │   ├── build_gold.py            # silver -> gold (TRIMP, ATL, CTL, TSB)
@@ -321,6 +338,8 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 │   ├── insights.py              # verdict du jour et analyses rédigées (nuit, journée, stress, activités)
 │   ├── feedback.py              # questionnaire après sortie et exploitation des réponses
 │   ├── nutrition.py             # nutrition et hydratation de course
+│   ├── goals.py                 # objectifs de course
+│   ├── watch.py                 # conversion des séances en entraînements Garmin, envoi sans doublon
 │   └── planning.py              # plan d'entraînement jusqu'à la course
 ├── scripts/
 │   ├── generate_sample_data.py  # données Garmin synthétiques pour la démo
@@ -378,6 +397,7 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 - [x] API FastAPI sur Kubernetes : forme du jour, temps prédits (VDOT), allures d'entraînement
 - [x] Tableau de bord Streamlit (forme, prédictions, allures, historique, séances), déployé sur Kubernetes
 - [x] Questionnaire après sortie, planning personnalisé, nutrition et hydratation
+- [x] Objectifs suivis et séance du jour envoyée chaque matin sur la montre
 - [ ] Coach IA hebdomadaire basé sur un LLM
 - [ ] Monitoring et détection de dérive
 

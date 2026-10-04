@@ -128,11 +128,22 @@ def race_effort(run: pd.Series) -> tuple[float, float]:
     return float(run["distance_m"]), float(moving if pd.notna(moving) else run["duration_s"])
 
 
-def collect_performances(activities: pd.DataFrame, labels: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Performances utilisables : TOUTES les courses, et les meilleurs 5/10 km des seances dures uniquement."""
+MIN_RPE_FOR_PERFORMANCE = 7  # « Difficile » ou « Maximal » dans le questionnaire
+
+
+def collect_performances(activities: pd.DataFrame, labels: pd.DataFrame | None = None,
+                         efforts: dict[int, float] | None = None) -> pd.DataFrame:
+    """Performances utilisables : TOUTES les courses, et les meilleurs 5/10 km des seances dures uniquement.
+
+    `efforts` : effort ressenti déclaré dans le questionnaire. Une sortie courue sans forcer (effort sous 7/10)
+    ne reflète pas la capacité maximale : elle est écartée, même étiquetée « course ».
+    """
     runs = activities[activities["sport"] == "running"].copy()
     runs["date"] = pd.to_datetime(runs["start_time"]).dt.normalize()
     runs["kind"] = runs["activity_id"].map(session_types(labels))
+    if efforts:
+        declared = runs["activity_id"].map(efforts)
+        runs = runs[declared.isna() | (declared >= MIN_RPE_FOR_PERFORMANCE)]
     rows = []
 
     for _, r in runs[runs["kind"] == "course"].iterrows():

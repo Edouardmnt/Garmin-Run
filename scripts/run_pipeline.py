@@ -6,6 +6,7 @@ Modes :
 - process : silver -> gold, à partir des données brutes déjà présentes
 - train   : entraînement et évaluation du modèle de récupération sur la couche gold
 - transfer: expérience personnel / global (LifeSnaps) / global + personnel
+- matin   : synchronisation complète, puis envoi de la séance du jour sur la montre
 """
 
 import subprocess
@@ -20,6 +21,7 @@ MODES = {
     "process": TRANSFORM,
     "train": [["-m", "ml.train_recovery"]],  # lancé comme module : les modèles maison restent importables
     "transfer": [["-m", "ml.train_transfer"]],
+    "matin": [["ingestion/garmin_export.py"], *TRANSFORM, ["-m", "ingestion.garmin_push"]],
 }
 
 

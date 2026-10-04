@@ -1,4 +1,4 @@
-# Synchronisation Garmin + transformations, chaque matin à 6 h, heure de Paris (lab 3)
+# Chaque matin à 6 h (Paris) : synchronisation Garmin, transformations, puis séance du jour envoyée à la montre
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -25,7 +25,7 @@ spec:
           containers:
             - name: pipeline
               image: ghcr.io/edouardmnt/garmin-run:latest
-              args: ["sync"]
+              args: ["matin"]
               envFrom:
                 - configMapRef:
                     name: garmin-config

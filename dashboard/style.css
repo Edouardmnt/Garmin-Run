@@ -1,4 +1,4 @@
-/* Garmin-Run : sportif, chic, épuré. Une famille (Archivo), une couleur d'accent (vert anglais). */
+/* Foulée : sportif, chic, épuré. Une famille (Archivo), une couleur d'accent (vert anglais). */
 @font-face {
   font-family: "Archivo";
   src: url("/app/static/Archivo.ttf") format("truetype");
@@ -38,9 +38,16 @@ h3 { font-size: 1rem !important; font-weight: 600 !important; }
 [data-testid="stCaptionContainer"], .stCaption { color: var(--gris) !important; }
 
 /* En-tête : marque et navigation en liens soulignés */
-.marque { font-weight: 700; font-stretch: 112%; font-size: 1.05rem; letter-spacing: .01em; }
-.marque span { color: var(--accent); }
-.st-key-page div[role="radiogroup"] { gap: 1.8rem; border-bottom: 1px solid var(--filet); flex-wrap: wrap; width: 100%; }
+.marque {
+  text-align: center; font-weight: 300; font-stretch: 112%; font-size: 1.9rem; letter-spacing: .04em;
+  margin-bottom: .6rem;
+}
+.st-key-page div[role="radiogroup"] {
+  gap: 1.8rem; border-bottom: 1px solid var(--filet); flex-wrap: wrap; width: 100%; justify-content: center;
+}
+.st-key-page [data-testid="stWidgetLabel"] { display: none; }
+/* Le conteneur de la navigation prend toute la largeur pour que les onglets soient centrés */
+.st-key-page, .st-key-page [data-testid="stRadio"] { width: 100% !important; }
 .st-key-page [data-testid="stRadioOption"] {
   padding: .25rem 0 .75rem; margin: 0 !important; border-bottom: 2px solid transparent; cursor: pointer;
 }

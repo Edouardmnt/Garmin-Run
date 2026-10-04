@@ -1,4 +1,4 @@
-"""Tableau de bord Garmin-Run : l'interface ne lit jamais les données, elle interroge l'API.
+"""Foulée, le tableau de bord : l'interface ne lit jamais les données, elle interroge l'API.
 
 Lancement local (API démarrée sur le port 8000) :  streamlit run dashboard/app.py
 Sans API séparée :  $env:RUNLAB_API_URL = "inprocess"; streamlit run dashboard/app.py
@@ -30,7 +30,7 @@ TYPE_NAMES = {"ef": "Endurance fondamentale", "longue": "Sortie longue", "tempo"
               "specifique": "Allure course", "course": "Course"}
 LEVEL_COLORS = {"vert": OK, "ambre": VIGILANCE, "rouge": ALERTE}
 
-st.set_page_config(page_title="Garmin-Run", page_icon="🏃", layout="wide")
+st.set_page_config(page_title="Foulée", page_icon="🏃", layout="wide")
 st.markdown(f"<style>{(Path(__file__).parent / 'style.css').read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
 
@@ -71,6 +71,15 @@ def post(path: str, payload: dict) -> tuple[bool, dict]:
     except requests.ConnectionError:
         return False, {"detail": f"L'API ne répond pas à l'adresse {API_URL}."}
     return response.status_code == 200, response.json()
+
+
+def delete(path: str) -> bool:
+    if API_URL == "inprocess":
+        return inprocess_client().delete(path).status_code == 200
+    try:
+        return requests.delete(f"{API_URL}{path}", timeout=30).status_code == 200
+    except requests.ConnectionError:
+        return False
 
 
 def get(path: str, **params) -> dict | None:
@@ -159,6 +168,9 @@ def history(days: int) -> pd.DataFrame | None:
 # --- Questionnaire après sortie ------------------------------------------------------------------
 
 def questionnaire_card() -> None:
+    thanks = st.session_state.pop("merci_questionnaire", None)
+    if thanks:  # message conservé après le rafraîchissement automatique
+        st.success(thanks)
     data = get("/questionnaire")
     run = (data or {}).get("en_attente")
     if not run:
@@ -179,10 +191,37 @@ def questionnaire_card() -> None:
             else:
                 ok, body = post(f"/questionnaire/{run['activity_id']}", {"reponses": answers})
                 if ok:
-                    api_get.clear()
-                    st.success(body["message"])
+                    api_get.clear()  # prédictions, allures et planning sont recalculés avec tes réponses
+                    st.session_state["merci_questionnaire"] = body["message"]
+                    st.rerun()  # le questionnaire disparaît (ou laisse place au suivant)
                 else:
                     st.error(f"Réponses non enregistrées : {body.get('detail')}")
+
+
+# --- Montre --------------------------------------------------------------------------------------
+
+def watch_block() -> None:
+    data = get("/montre/seance-du-jour")
+    if data is None:
+        return
+    st.header("Ta montre")
+    session = data["seance"]
+    if session is None:
+        st.markdown(resume("Aujourd'hui", "Pas de séance de course prévue : rien à envoyer sur ta montre."),
+                    unsafe_allow_html=True)
+        return
+    sent = data["envois"].get(session["date"])
+    left, right = st.columns([3, 1], gap="large")
+    status = (f"Déjà dans ton calendrier Garmin : {sent['titre']}." if sent
+              else "Pas encore envoyée. Elle part automatiquement chaque matin à 6 h si le cluster tourne.")
+    left.markdown(resume(f"Séance du jour : {session['titre']}", status), unsafe_allow_html=True)
+    if right.button("Envoyer sur ma montre", use_container_width=True):
+        ok, body = post("/montre/envoyer", {})
+        if ok:
+            api_get.clear()
+            st.success(body["message"] + " Synchronise ta montre avec l'application Garmin Connect pour la voir.")
+        else:
+            st.error(f"Envoi impossible : {body.get('detail')}")
 
 
 # --- Accueil -------------------------------------------------------------------------------------
@@ -207,14 +246,18 @@ def page_home() -> None:
         verdict_card(analyse["verdict"])
 
     st.header("Prochaines séances")
-    objective = st.session_state.get("objectif", {})
-    plan = get("/planning", **objective)
+    plan = get("/planning/actif")
     upcoming = [s for w in (plan or {}).get("semaines", []) for s in w["seances"]][:3]
     if upcoming:
         sessions_table(upcoming)
-        if not objective:
-            st.caption("Planning général sur deux semaines. "
-                       "Fixe un objectif dans l'onglet Planning pour une préparation sur mesure.")
+    goal = (plan or {}).get("objectif_actif")
+    if goal:
+        race_day = date.fromisoformat(goal["date_course"]).strftime("%d/%m/%Y")
+        st.caption(f"Préparation : {goal['nom']}, le {race_day}.")
+    else:
+        st.caption("Planning général sur deux semaines. Crée un objectif dans l'onglet Objectifs "
+                   "pour une préparation sur mesure.")
+    watch_block()
 
     st.header("Ta semaine")
     c1, c2, c3 = st.columns(3, gap="large")
@@ -366,49 +409,108 @@ def page_nights() -> None:
 
 # --- Planning ------------------------------------------------------------------------------------
 
+def page_goals() -> None:
+    st.title("Mes objectifs")
+    data = get("/objectifs")
+    goals = (data or {}).get("objectifs", [])
+    active = next((g for g in goals if g["actif"] and g["jours_restants"] >= 0), None)
+
+    if active:
+        left, right = st.columns([6, 5], gap="large")
+        with left:
+            race_day = date.fromisoformat(active["date_course"]).strftime("%d/%m/%Y")
+            details = [("Jours restants", str(active["jours_restants"])), ("Temps visé", active["temps_vise"] or "—")]
+            if active.get("ecart_s") is not None:
+                gap = active["ecart_s"]
+                details.append(("Écart", f"{'+' if gap > 0 else '−'}{abs(gap) // 60}'{abs(gap) % 60:02d}\""))
+            hero(f"{active['nom']}, le {race_day} : ton temps prédit aujourd'hui", active["temps_predit"], details)
+        with right:
+            follow = get(f"/objectifs/{active['id']}/suivi", semaines=12)
+            if follow and follow["evolution"]:
+                df = pd.DataFrame(follow["evolution"])
+                df["date"] = pd.to_datetime(df["date"])
+                fig = go.Figure()
+                fig.add_scatter(x=df["date"], y=df["temps_predit_s"] / 60, name="Temps prédit",
+                                line=dict(color=ENCRE, width=2), mode="lines+markers", marker=dict(size=5),
+                                text=df["temps_predit"], hovertemplate="%{text}<extra></extra>")
+                if active.get("temps_vise_s"):
+                    fig.add_hline(y=active["temps_vise_s"] / 60, line=dict(color=ACCENT, width=1.5, dash="dot"),
+                                  annotation_text="Temps visé", annotation_font_color=ACCENT)
+                fig.update_layout(yaxis_title="minutes", showlegend=False)
+                figure(fig, 260)
+                st.caption("Ton temps prédit sur cette course, semaine après semaine. Sous la ligne verte : "
+                           "tu es dans les temps.")
+
+    st.header("Nouvel objectif")
+    with st.form("formulaire_objectif", clear_on_submit=False):
+        c1, c2, c3 = st.columns(3)
+        name = c1.text_input("Nom de la course", placeholder="Semi de Paris")
+        distance = c2.selectbox("Distance", [*DISTANCES, "Autre distance"], index=1)
+        race_date = c3.date_input("Date", value=date.today() + timedelta(weeks=10),
+                                  min_value=date.today() + timedelta(days=3), format="DD/MM/YYYY")
+        c4, c5, c6 = st.columns(3)
+        target = c4.text_input("Temps visé (facultatif)", placeholder="47:30 ou 1:45:00")
+        dplus = c5.number_input("D+ du parcours (m)", 0, 5000, 0, step=10)
+        per_week = c6.slider("Sorties de course par semaine", 2, 6, 3)
+        c7, c8, c9 = st.columns(3)
+        other_km = c7.number_input("Autre distance (km)", min_value=0.0, max_value=100.0, value=0.0, step=0.5, format="%.1f",
+                                   help="Utilisée si tu choisis « Autre distance » : 15 km, 20 km, trail de 30 km…")
+        tennis = c8.multiselect("Jours de tennis", DAYS, placeholder="Aucun")
+        long_day = c9.selectbox("Jour de la sortie longue", DAYS, index=6)
+        submitted = st.form_submit_button("Créer l'objectif", type="primary")
+    if submitted:
+        ok, body = post("/objectifs", {"objectif": {
+            "nom": name, "distance": DISTANCES.get(distance), "distance_km": other_km if distance not in DISTANCES else None,
+            "date_course": race_date.isoformat(), "temps_vise": target,
+            "denivele_m": int(dplus), "seances_par_semaine": per_week,
+            "jours_tennis": [DAYS.index(d) for d in tennis], "jour_sortie_longue": DAYS.index(long_day)}})
+        if ok:
+            api_get.clear()
+            st.success(f"Objectif créé : {body['objectif']['nom']}. Ton planning s'est adapté.")
+            st.rerun()
+        else:
+            detail = body.get("detail")
+            st.error(" ".join(detail.values()) if isinstance(detail, dict) else str(detail))
+
+    if goals:
+        st.header("Tous mes objectifs")
+        for g in goals:
+            race_day = date.fromisoformat(g["date_course"]).strftime("%d/%m/%Y")
+            cols = st.columns([4, 2, 2, 2, 1, 1], vertical_alignment="center")
+            cols[0].markdown(f"**{esc(g['nom'])}**  \n<span style='color:{GRIS}'>{esc(g['libelle'])}, {race_day}"
+                             f"{'  (actif)' if g['actif'] else ''}</span>", unsafe_allow_html=True)
+            cols[1].markdown(f"Prédit  \n**{g['temps_predit']}**")
+            cols[2].markdown(f"Visé  \n**{g['temps_vise'] or '—'}**")
+            cols[3].markdown(f"<span style='color:{GRIS}'>{esc(g['statut'])}</span>", unsafe_allow_html=True)
+            if not g["actif"] and g["jours_restants"] >= 0 and cols[4].button("Activer", key=f"act_{g['id']}"):
+                post(f"/objectifs/{g['id']}/activer", {})
+                api_get.clear()
+                st.rerun()
+            if cols[5].button("Suppr.", key=f"del_{g['id']}"):
+                delete(f"/objectifs/{g['id']}")
+                api_get.clear()
+                st.rerun()
+
+
 def page_planning() -> None:
     st.title("Mon planning")
-    saved = st.session_state.get("objectif", {})
-    with st.form("formulaire_objectif"):
-        c1, c2, c3 = st.columns(3)
-        current = list(DISTANCES.values()).index(saved.get("distance", "10k"))
-        distance = c1.selectbox("Course visée", list(DISTANCES), index=current)
-        default_date = date.fromisoformat(saved["date_course"]) if saved.get("date_course") else date.today() + timedelta(weeks=8)
-        race_date = c2.date_input("Date de la course", value=default_date, min_value=date.today() + timedelta(days=3),
-                                  format="DD/MM/YYYY")
-        dplus = c3.number_input("D+ du parcours (m)", 0, 5000, int(saved.get("denivele_m", 0)), step=10)
-        c4, c5, c6 = st.columns(3)
-        per_week = c4.slider("Sorties de course par semaine", 2, 6, int(saved.get("seances_par_semaine", 3)))
-        tennis = c5.multiselect("Jours de tennis", DAYS, placeholder="Aucun",
-                                default=[DAYS[int(d)] for d in saved.get("jours_tennis", "").split(",") if d])
-        long_day = c6.selectbox("Jour de la sortie longue", DAYS, index=int(saved.get("jour_sortie_longue", 6)))
-        submitted = st.form_submit_button("Construire mon planning", type="primary")
-    if submitted:
-        st.session_state["objectif"] = {
-            "distance": DISTANCES[distance], "date_course": race_date.isoformat(), "denivele_m": int(dplus),
-            "seances_par_semaine": per_week, "jours_tennis": ",".join(str(DAYS.index(d)) for d in tennis),
-            "jour_sortie_longue": DAYS.index(long_day),
-        }
-    objective = st.session_state.get("objectif")
-    if not objective:
-        st.markdown('<div class="lecture" style="margin-top:1.2rem"><p>Renseigne ta course, ses contraintes et tes jours '
-                    'de tennis, puis construis ton planning : il part de ton volume réel et de tes allures personnelles.</p>'
-                    '</div>', unsafe_allow_html=True)
-        return
-
-    plan = get("/planning", **objective)
+    plan = get("/planning/actif")
     if not plan:
         return
-    goal = plan["objectif"]
-    weeks = plan["semaines"]
-    race_day = date.fromisoformat(goal["date_course"]).strftime("%d/%m/%Y")
+    goal, weeks = plan["objectif"], plan["semaines"]
+    active = plan.get("objectif_actif")
     left, right = st.columns([6, 5], gap="large")
     with left:
         volume = f"{plan['volume_actuel_km_semaine']:g} km par semaine".replace(".", ",")
         details = [("Allure", goal["allure_course"]), ("Volume actuel", volume)]
         if goal["denivele_m"]:
             details.append(("Dénivelé", f"{goal['denivele_m']} m"))
-        hero(f"Objectif {distance.lower()} le {race_day}", goal["temps_vise"], details)
+        if active:
+            race_day = date.fromisoformat(active["date_course"]).strftime("%d/%m/%Y")
+            legend = f"{active['nom']}, le {race_day} : temps visé par le plan"
+        else:
+            legend = "Sans objectif : deux semaines de développement, base 10 km"
+        hero(legend, goal["temps_vise"], details)
     with right:
         phase_colors = {"Développement": "#C9CDD3", "Spécifique": ACCENT, "Affûtage": "#9AA1AB", "Semaine de course": ENCRE}
         fig = go.Figure(go.Bar(x=[f"S{w['numero']}" for w in weeks], y=[w["volume_km"] for w in weeks],
@@ -423,13 +525,14 @@ def page_planning() -> None:
         st.markdown('<div class="donnees"><h4>Adapté à tes derniers jours</h4><ul>'
                     + "".join(f"<li>{esc(n)}</li>" for n in plan["personnalisation"]) + "</ul></div>",
                     unsafe_allow_html=True)
-    notes = [esc(n) for n in plan["notes"]] + ["Nutrition et hydratation du jour de course : onglet Prédictions."]
+    notes = [esc(n) for n in plan["notes"]] + ["Objectif, jours de tennis et nombre de sorties : onglet Objectifs. "
+                                               "Nutrition du jour de course : onglet Prédictions."]
     st.markdown('<div class="lecture" style="margin-top:1rem"><h4>À savoir</h4><p>' + "<br>".join(notes)
                 + "</p></div>", unsafe_allow_html=True)
 
     for week in weeks:
-        start = date.fromisoformat(week["debut"]).strftime("%d/%m")
-        st.header(f"Semaine {week['numero']}, à partir du {start}")
+        start_day = date.fromisoformat(week["debut"]).strftime("%d/%m")
+        st.header(f"Semaine {week['numero']}, à partir du {start_day}")
         st.caption(f"{week['phase']}, {week['volume_km']:g} km".replace(".", ","))
         if week["seances"]:
             sessions_table(week["seances"])
@@ -442,13 +545,19 @@ def page_planning() -> None:
 def page_predictions() -> None:
     st.title("Mes prédictions")
     c1, c2, c3 = st.columns([3, 3, 2])
-    label = c1.radio("Distance", list(DISTANCES), index=1, horizontal=True)
+    label = c1.radio("Distance", [*DISTANCES, "Autre"], index=1, horizontal=True)
     dplus = c2.slider("D+ du parcours (m)", 0, 1500, 0, step=10)
     adjust = c3.toggle("Avec ma forme du jour", value=True)
-    preds = get("/predictions", distance=DISTANCES[label], ajuster_au_jour=adjust, denivele_m=dplus)
+    other_km = None
+    if label == "Autre":
+        other_km = st.number_input("Distance (km)", min_value=1.0, max_value=100.0, value=15.0, step=0.5)
+        label = f"{other_km:g} km".replace(".", ",")
+    key = "personnalisee" if other_km else DISTANCES[label]
+    preds = get("/predictions", distance="10k" if other_km else key, ajuster_au_jour=adjust, denivele_m=dplus,
+                distance_km=other_km)
     if not preds:
         return
-    p = preds["predictions"][DISTANCES[label]]
+    p = preds["predictions"][key]
 
     hero(f"Ton {label.lower()} prédit", p["temps_ajuste"],
          [("Allure", p["allure_course"]), ("Sur le plat", p["temps_plat"]),
@@ -476,7 +585,8 @@ def page_predictions() -> None:
 
     st.header("Nutrition et hydratation")
     temperature = st.slider("Température prévue le jour de la course (°C)", -5, 40, 15)
-    food = get("/nutrition", distance=DISTANCES[label], temperature_c=temperature, denivele_m=dplus)
+    food = get("/nutrition", distance="10k" if other_km else key, temperature_c=temperature, denivele_m=dplus,
+               distance_km=other_km)
     if not food:
         return
     c1, c2, c3 = st.columns(3)
@@ -565,9 +675,9 @@ def page_sessions() -> None:
     st.dataframe(table, hide_index=True, use_container_width=True)
 
 
-PAGES = {"Accueil": page_home, "Ma forme": page_fitness, "Nuits & journées": page_nights, "Planning": page_planning,
-         "Prédictions": page_predictions, "Allures": page_paces, "Séances": page_sessions}
+PAGES = {"Accueil": page_home, "Objectifs": page_goals, "Planning": page_planning, "Ma forme": page_fitness,
+         "Nuits & journées": page_nights, "Prédictions": page_predictions, "Allures": page_paces, "Séances": page_sessions}
 
-st.markdown('<div class="marque">Garmin-Run</div>', unsafe_allow_html=True)
+st.markdown('<div class="marque">Foulée</div>', unsafe_allow_html=True)
 choice = st.radio("Navigation", list(PAGES), horizontal=True, label_visibility="collapsed", key="page")
 PAGES[choice]()

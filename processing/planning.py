@@ -33,6 +33,17 @@ def fmt_pace(seconds: float | None) -> str:
     return f"{m}'{s:02d}\"/km"
 
 
+def category_for(km: float) -> str:
+    """Famille d'entraînement d'une distance libre : la structure du plan suit la distance classique la plus proche."""
+    if km <= 7.5:
+        return "5k"
+    if km <= 15:
+        return "10k"
+    if km <= 30:
+        return "semi"
+    return "marathon"
+
+
 def phase_for(weeks_left: int | None) -> str:
     if weeks_left is None:
         return "Développement"
@@ -98,6 +109,29 @@ def pace_range(p: dict) -> str:
     return f"{fmt_pace(p.get('rapide_s'))} – {fmt_pace(p.get('lente_s'))}"
 
 
+# --- Étapes structurées : exploitables par la montre ---------------------------------------------
+
+def step(kind: str, duree_s: float | None = None, distance_m: float | None = None, allure: dict | None = None) -> dict:
+    """Une étape : "echauffement", "effort", "recuperation" ou "retour_au_calme", avec sa cible d'allure (s/km)."""
+    target = None
+    if allure and allure.get("rapide_s") and allure.get("lente_s"):
+        target = {"rapide_s": round(allure["rapide_s"]), "lente_s": round(allure["lente_s"])}
+    return {"type": kind, "duree_s": None if duree_s is None else round(duree_s),
+            "distance_m": None if distance_m is None else round(distance_m), "allure": target}
+
+
+def repeat(times: int, steps: list[dict]) -> dict:
+    return {"type": "repetition", "repetitions": times, "etapes": steps}
+
+
+def around(pace_s: float, margin_s: int = 3) -> dict:
+    """Fourchette serrée autour d'une allure précise (allure de course)."""
+    return {"rapide_s": pace_s - margin_s, "lente_s": pace_s + margin_s}
+
+
+WARMUP_S, COOLDOWN_S = 15 * 60, 10 * 60
+
+
 def session(day: date, kind: str, title: str, description: str, km: float, pace_s: float | None,
             pace_txt: str, hr: list | None, goal: str, minutes: float | None = None) -> dict:
     if minutes is None and pace_s is not None:
@@ -112,11 +146,13 @@ def session(day: date, kind: str, title: str, description: str, km: float, pace_
 
 def build_plan(today: date, distance: str, race_date: date | None, sessions_per_week: int, tennis_days: list[int],
                long_day: int, base_weekly_km: float, paces: dict, race_pace_s: float, verdict: str = "vert",
-               volume_factor: float = 1.0, ef_shift_s: int = 0) -> dict:
+               volume_factor: float = 1.0, ef_shift_s: int = 0, race_km: float | None = None,
+               race_label: str | None = None) -> dict:
     """paces : {"ef"|"tempo"|"fractionne": {"rapide_s", "lente_s", "fc_cible"}}.
 
     volume_factor : réduction du volume décidée à partir des signaux récents (douleur, sommeil, stress) ;
-    ef_shift_s    : secondes ajoutées aux allures d'endurance fondamentale (footings ressentis trop durs).
+    ef_shift_s    : secondes ajoutées aux allures d'endurance fondamentale (footings ressentis trop durs) ;
+    race_km, race_label : distance réelle de la course (distance libre) ; `distance` donne la famille d'entraînement.
     """
     tennis = set(tennis_days)
     available = [d for d in range(7) if d not in tennis]
@@ -129,7 +165,8 @@ def build_plan(today: date, distance: str, race_date: date | None, sessions_per_
     if ef_shift_s and ef.get("rapide_s") is not None:
         ef = {**ef, "rapide_s": ef["rapide_s"] + ef_shift_s, "lente_s": ef["lente_s"] + ef_shift_s}
     ef_mid = (ef.get("rapide_s", 360) + ef.get("lente_s", 390)) / 2
-    label = DISTANCE_LABELS[distance]
+    label = race_label or DISTANCE_LABELS[distance]
+    race_distance_km = race_km or {"5k": 5, "10k": 10, "semi": 21.1, "marathon": 42.2}[distance]
     weeks, notes = [], []
 
     for w in range(n_weeks):
@@ -149,17 +186,22 @@ def build_plan(today: date, distance: str, race_date: date | None, sessions_per_
                     advice = (f"Vise une allure régulière de {fmt_pace(race_pace_s)}, "
                               "en partant légèrement plus lentement sur le premier kilomètre.")
                     sessions.append(session(d, "course", f"Course : {label}", advice,
-                                            {"5k": 5, "10k": 10, "semi": 21.1, "marathon": 42.2}[distance], race_pace_s,
+                                            race_distance_km, race_pace_s,
                                             fmt_pace(race_pace_s), None, "Le jour J."))
+                    sessions[-1]["etapes"] = [step("effort", distance_m=sessions[-1]["distance_km"] * 1000,
+                                                   allure=around(race_pace_s, 5))]
                 elif d == sharpen:
                     sessions.append(session(d, "ef", "Footing d'activation", "20 min en endurance fondamentale, puis 4 lignes "
                                             "droites de 80 m en accélérant progressivement.", 4, ef_mid,
                                             pace_range(ef),
                                             ef.get("fc_cible"), "Garder des jambes vives sans se fatiguer."))
+                    sessions[-1]["etapes"] = [step("effort", duree_s=20 * 60, allure=ef),
+                                              repeat(4, [step("effort", distance_m=80), step("recuperation", duree_s=60)])]
                 else:
                     sessions.append(session(d, "ef", "Footing facile", "30 min en endurance fondamentale.", 5, ef_mid,
                                             pace_range(ef),
                                             ef.get("fc_cible"), "Entretenir sans fatigue avant la course."))
+                    sessions[-1]["etapes"] = [step("effort", duree_s=30 * 60, allure=ef)]
             weeks.append({"numero": w + 1, "debut": monday.isoformat(), "phase": phase,
                           "volume_km": round(sum(x["distance_km"] for x in sessions), 1), "seances": sessions})
             continue
@@ -185,11 +227,13 @@ def build_plan(today: date, distance: str, race_date: date | None, sessions_per_
                                         "allure régulière et confortable.", long_km, ef.get("lente_s", ef_mid),
                                         pace_range(ef), ef.get("fc_cible"),
                                         "Développer l'endurance et l'économie de course."))
+                sessions[-1]["etapes"] = [step("effort", distance_m=long_km * 1000, allure=ef)]
             elif kind == "ef":
                 sessions.append(session(day, "ef", "Footing en endurance fondamentale", f"{easy_km:.0f} km tranquilles : "
                                         "tu dois pouvoir parler en courant.", easy_km, ef_mid,
                                         pace_range(ef), ef.get("fc_cible"),
                                         "Récupérer activement et construire le volume."))
+                sessions[-1]["etapes"] = [step("effort", distance_m=easy_km * 1000, allure=ef)]
             else:
                 q = quality_kinds.pop(0) if quality_kinds else "tempo"
                 if q == "fractionne":
@@ -201,6 +245,11 @@ def build_plan(today: date, distance: str, race_date: date | None, sessions_per_
                                             f"à allure fractionné, récupération {rest}. Retour au calme 10 min.", km,
                                             frac.get("rapide_s"), pace_range(frac),
                                             frac.get("fc_cible"), "Améliorer la VMA et la vitesse.", minutes))
+                    rest_s = (float(rest.split()[0]) + (0.5 if "30" in rest else 0)) * 60
+                    sessions[-1]["etapes"] = [step("echauffement", duree_s=WARMUP_S, allure=ef),
+                                              repeat(reps, [step("effort", distance_m=rep_m, allure=frac),
+                                                            step("recuperation", duree_s=rest_s)]),
+                                              step("retour_au_calme", duree_s=COOLDOWN_S, allure=ef)]
                 elif q == "tempo":
                     tempo_min = min(40, 15 + 5 * w)
                     tempo_pace = tempo.get("lente_s") or ef_mid
@@ -208,6 +257,9 @@ def build_plan(today: date, distance: str, race_date: date | None, sessions_per_
                     sessions.append(session(day, "tempo", "Tempo", f"Échauffement 15 min, puis {tempo_min} min continues à "
                                             "allure tempo, retour au calme 10 min.", km, tempo_pace, pace_range(tempo),
                                             tempo.get("fc_cible"), "Repousser le seuil : tenir vite plus longtemps.", minutes))
+                    sessions[-1]["etapes"] = [step("echauffement", duree_s=WARMUP_S, allure=ef),
+                                              step("effort", duree_s=tempo_min * 60, allure=tempo),
+                                              step("retour_au_calme", duree_s=COOLDOWN_S, allure=ef)]
                 else:
                     reps, rep_m = SPECIFIC[distance]
                     if phase == "Affûtage":
@@ -217,6 +269,10 @@ def build_plan(today: date, distance: str, race_date: date | None, sessions_per_
                                             f"{rep_m / 1000:g} km à allure course, récupération 2 min. Retour au calme 10 min.",
                                             km, race_pace_s, fmt_pace(race_pace_s), None,
                                             "Automatiser l'allure de course.", minutes))
+                    sessions[-1]["etapes"] = [step("echauffement", duree_s=WARMUP_S, allure=ef),
+                                              repeat(reps, [step("effort", distance_m=rep_m, allure=around(race_pace_s)),
+                                                            step("recuperation", duree_s=120)]),
+                                              step("retour_au_calme", duree_s=COOLDOWN_S, allure=ef)]
         weeks.append({"numero": w + 1, "debut": monday.isoformat(), "phase": phase,
                       "volume_km": round(sum(x["distance_km"] for x in sessions), 1), "seances": sessions})
 
@@ -228,7 +284,9 @@ def build_plan(today: date, distance: str, race_date: date | None, sessions_per_
                 s.update({"type": "ef", "titre": "Footing facile (séance adaptée)",
                           "description": "Ta forme du jour ne permet pas une séance dure : 30 à 40 min très faciles, "
                           f"ou repos complet. La séance prévue ({original.lower()}) peut être décalée de 48 h.",
-                          "distance_km": 6.0, "allure": f"{fmt_pace(ef.get('lente_s'))} ou plus lent"})
+                          "distance_km": 6.0, "allure": f"{fmt_pace(ef.get('lente_s'))} ou plus lent",
+                          "etapes": [step("effort", duree_s=35 * 60, allure={"rapide_s": ef.get("lente_s"),
+                                                                              "lente_s": (ef.get("lente_s") or 0) + 30})]})
                 notes.append(f"La séance du jour ({original.lower()}) a été allégée à cause de ta forme du jour.")
 
     if race_date is None:

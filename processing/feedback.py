@@ -115,6 +115,29 @@ def apply_feedback_labels(labels: pd.DataFrame | None, feedback: list[dict]) -> 
     return pd.concat([labels, extra], ignore_index=True)
 
 
+def efforts_by_activity(feedback: list[dict]) -> dict[int, float]:
+    """Effort ressenti (RPE) déclaré pour chaque sortie."""
+    return {f["activity_id"]: f["rpe"] for f in feedback}
+
+
+PREDICTION_SCORE = {"Trop optimiste": 1, "Juste": 0, "Trop pessimiste": -1}
+BIAS_STEP_PCT, BIAS_MAX_PCT, BIAS_WINDOW = 1.5, 3.0, 5
+
+
+def prediction_bias(feedback: list[dict]) -> tuple[float, int]:
+    """Correction des temps prédits d'après les réponses « temps prédit » des dernières courses.
+
+    « Trop optimiste » : la prédiction était trop rapide -> on allonge les temps ; « Trop pessimiste » :
+    on les raccourcit. Moyenne des 5 dernières réponses, 1,5 % par réponse, plafonnée à ±3 %.
+    """
+    scores = [PREDICTION_SCORE[f["reponses"]["prediction"]] for f in sorted(feedback, key=lambda f: f["date_sortie"])
+              if f["reponses"].get("prediction") in PREDICTION_SCORE][-BIAS_WINDOW:]
+    if not scores:
+        return 0.0, 0
+    pct = sum(scores) / len(scores) * BIAS_STEP_PCT * len(scores) ** 0.5  # plus de réponses = plus de confiance
+    return round(max(-BIAS_MAX_PCT, min(BIAS_MAX_PCT, pct)), 2), len(scores)
+
+
 def recent_signals(feedback: list[dict], today: date) -> dict:
     """Signaux récents utilisés par le verdict du jour et le planning."""
     def within(days):
