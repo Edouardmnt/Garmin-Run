@@ -100,6 +100,9 @@ def build_daily() -> pd.DataFrame:
             "rem_sleep_s": dig(sleep, "dailySleepDTO", "remSleepSeconds"),
             "awake_s": dig(sleep, "dailySleepDTO", "awakeSleepSeconds"),
             "sleep_score": dig(sleep, "dailySleepDTO", "sleepScores", "overall", "value"),
+            # Heures de coucher et de lever, en heure locale (horodatage Garmin en millisecondes)
+            "sleep_start_ms": dig(sleep, "dailySleepDTO", "sleepStartTimestampLocal"),
+            "sleep_end_ms": dig(sleep, "dailySleepDTO", "sleepEndTimestampLocal"),
             # Variabilité de la fréquence cardiaque (VFC / HRV)
             "hrv_last_night": dig(hrv, "hrvSummary", "lastNightAvg"),
             "hrv_weekly_avg": dig(hrv, "hrvSummary", "weeklyAvg"),
@@ -108,6 +111,10 @@ def build_daily() -> pd.DataFrame:
             "resting_hr": dig(stats, "restingHeartRate"),
             "steps": dig(stats, "totalSteps"),
             "avg_stress": dig(stats, "averageStressLevel"),
+            "max_stress": dig(stats, "maxStressLevel"),
+            "high_stress_s": dig(stats, "highStressDuration"),
+            "body_battery_charged": dig(stats, "bodyBatteryChargedValue"),
+            "body_battery_drained": dig(stats, "bodyBatteryDrainedValue"),
             "body_battery_max": dig(stats, "bodyBatteryHighestValue"),
             "body_battery_min": dig(stats, "bodyBatteryLowestValue"),
         })
@@ -115,6 +122,17 @@ def build_daily() -> pd.DataFrame:
     df = pd.DataFrame(rows)
     df["date"] = pd.to_datetime(df["date"]).dt.date
     df["sleep_h"] = df["sleep_s"] / 3600
+
+    def local_hour(ms):
+        t = pd.to_datetime(ms, unit="ms", errors="coerce")
+        return t.dt.hour + t.dt.minute / 60
+
+    # Heure de coucher sur une échelle continue : 23 h = 23, 1 h du matin = 25
+    start = local_hour(df["sleep_start_ms"])
+    df["bedtime_h"] = start.where(start >= 12, start + 24)
+    df["wake_h"] = local_hour(df["sleep_end_ms"])
+    df["high_stress_min"] = df["high_stress_s"] / 60
+    df = df.drop(columns=["sleep_start_ms", "sleep_end_ms", "high_stress_s"])
     return df
 
 

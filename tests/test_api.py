@@ -65,3 +65,9 @@ def test_predictions_avec_denivele(client):
     hilly = client.get("/predictions", params={"distance": "10k", "ajuster_au_jour": False, "denivele_m": 200}).json()
     assert hilly["predictions"]["10k"]["temps_base_s"] > flat["predictions"]["10k"]["temps_base_s"]
     assert hilly["predictions"]["10k"]["temps_plat"] == flat["predictions"]["10k"]["temps_plat"]
+
+
+def test_historique(client):
+    body = client.get("/historique", params={"jours": 30}).json()
+    assert len(body["series"]) == 30
+    assert {"date", "atl", "ctl", "tsb", "hrv_last_night", "hrv_7j"} <= body["series"][0].keys()

@@ -3,5 +3,8 @@ pyarrow
 scikit-learn
 fastapi
 httpx
+streamlit
+plotly
+requests
 pytest
 ruff

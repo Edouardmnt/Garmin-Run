@@ -21,6 +21,8 @@ COPY processing/ processing/
 COPY scripts/ scripts/
 COPY ml/ ml/
 COPY api/ api/
+COPY dashboard/ dashboard/
+COPY .streamlit/ .streamlit/
 
 USER app
 VOLUME ["/data"]

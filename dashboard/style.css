@@ -1,0 +1,170 @@
+@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,700;0,800;1,700&family=Barlow:wght@400;500;600&display=swap");
+
+:root {
+  --piste: #4B2A7B;        /* violet de piste */
+  --piste-clair: #EDE7F6;
+  --encre: #1B1F3B;        /* bleu nuit */
+  --gris: #EEF0F5;         /* revêtement */
+  --ligne: #FFFFFF;        /* lignes de couloir */
+  --texte-doux: #5B6078;
+  --vert: #1E9E6A;
+  --ambre: #E0A100;
+  --rouge: #D64545;
+}
+
+html, body, [class*="css"], .stMarkdown, p, li, label, input, button {
+  font-family: "Barlow", system-ui, sans-serif;
+}
+
+h1, h2, h3, h4 {
+  font-family: "Barlow Condensed", "Arial Narrow", sans-serif !important;
+  font-weight: 700 !important;
+  color: var(--encre);
+  letter-spacing: 0.01em;
+}
+h1 { font-size: 2.6rem !important; line-height: 1.05 !important; }
+h2 { font-size: 1.9rem !important; margin-top: 1.6rem !important; }
+h3 { font-size: 1.35rem !important; }
+
+.block-container { max-width: 1180px; padding-top: 1.2rem; }
+
+/* Navigation : des couloirs de piste */
+div[role="radiogroup"][aria-label="Navigation"] {
+  background: var(--piste);
+  border-radius: 10px;
+  padding: 6px;
+  gap: 4px;
+  background-image: repeating-linear-gradient(90deg, transparent 0 calc(100% / 7 - 1px), rgba(255,255,255,.18) 0 calc(100% / 7));
+}
+div[role="radiogroup"][aria-label="Navigation"] label {
+  flex: 1;
+  justify-content: center;
+  padding: 8px 6px;
+  border-radius: 6px;
+  margin: 0 !important;
+}
+div[role="radiogroup"][aria-label="Navigation"] label p {
+  color: #fff !important;
+  font-family: "Barlow Condensed", sans-serif;
+  font-weight: 700;
+  font-size: 1.15rem;
+}
+div[role="radiogroup"][aria-label="Navigation"] label:has(input:checked) { background: #fff; }
+div[role="radiogroup"][aria-label="Navigation"] label:has(input:checked) p { color: var(--piste) !important; }
+div[role="radiogroup"][aria-label="Navigation"] label > div:first-child { display: none; }
+
+/* Le dossard : l'élément fort de l'accueil */
+.dossard {
+  position: relative;
+  background: #fff;
+  border: 3px solid var(--encre);
+  border-radius: 14px;
+  padding: 26px 34px 22px;
+  text-align: center;
+  box-shadow: 6px 6px 0 var(--piste);
+}
+.dossard::before, .dossard::after,
+.dossard .epingle-bas-gauche, .dossard .epingle-bas-droite {
+  content: "";
+  position: absolute;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--gris);
+  border: 2px solid var(--encre);
+}
+.dossard::before { top: 12px; left: 12px; }
+.dossard::after { top: 12px; right: 12px; }
+.dossard .epingle-bas-gauche { bottom: 12px; left: 12px; }
+.dossard .epingle-bas-droite { bottom: 12px; right: 12px; }
+.dossard .bandeau {
+  background: var(--piste);
+  color: #fff;
+  font-family: "Barlow Condensed", sans-serif;
+  font-weight: 700;
+  font-size: 1.1rem;
+  border-radius: 6px;
+  padding: 4px 10px;
+  display: inline-block;
+}
+.dossard .numero {
+  font-family: "Barlow Condensed", sans-serif;
+  font-weight: 800;
+  font-size: 6.2rem;
+  line-height: 1;
+  color: var(--encre);
+  margin: 14px 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+.dossard .sous-titre { color: var(--texte-doux); font-size: 1.05rem; }
+
+/* Pastilles d'état et de type de séance */
+.pastille {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-weight: 600;
+  font-size: .9rem;
+  color: #fff;
+}
+.vert { background: var(--vert); }
+.ambre { background: var(--ambre); color: var(--encre); }
+.rouge { background: var(--rouge); }
+
+.verdict {
+  border-left: 8px solid var(--vert);
+  background: #fff;
+  border-radius: 10px;
+  padding: 18px 22px;
+}
+.verdict.ambre-bord { border-left-color: var(--ambre); }
+.verdict.rouge-bord { border-left-color: var(--rouge); }
+.verdict .titre {
+  font-family: "Barlow Condensed", sans-serif;
+  font-weight: 800;
+  font-size: 2.3rem;
+  line-height: 1;
+}
+.score-piste {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--gris);
+  margin: 12px 0 6px;
+  overflow: hidden;
+}
+.score-piste span { display: block; height: 100%; border-radius: 5px; }
+
+/* Séance : une fiche avec un liseré de la couleur du type */
+.seance {
+  background: #fff;
+  border-radius: 10px;
+  border-left: 7px solid var(--piste);
+  padding: 14px 18px;
+  margin-bottom: 10px;
+}
+.seance .jour { font-family: "Barlow Condensed", sans-serif; font-weight: 700; font-size: 1.15rem; color: var(--texte-doux); }
+.seance .titre { font-family: "Barlow Condensed", sans-serif; font-weight: 700; font-size: 1.45rem; color: var(--encre); }
+.seance .chiffres { margin-top: 6px; font-weight: 600; color: var(--encre); font-variant-numeric: tabular-nums; }
+.seance .objectif { color: var(--texte-doux); font-size: .95rem; margin-top: 4px; }
+
+/* Blocs d'explication sous les graphiques */
+.lecture, .donnees {
+  border-radius: 10px;
+  padding: 14px 18px;
+  height: 100%;
+}
+.lecture { background: var(--piste-clair); }
+.donnees { background: #fff; border: 2px solid var(--piste); }
+.lecture h4, .donnees h4 { margin: 0 0 6px !important; font-size: 1.15rem !important; }
+.lecture p, .donnees li { font-size: .97rem; line-height: 1.5; }
+
+[data-testid="stMetricValue"] {
+  font-family: "Barlow Condensed", sans-serif;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 720px) {
+  .dossard .numero { font-size: 4.2rem; }
+  div[role="radiogroup"][aria-label="Navigation"] { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

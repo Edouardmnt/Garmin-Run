@@ -51,7 +51,7 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-              readOnly: true       # l'API lit les données, seul le CronJob les écrit
+              # l'API lit les données et écrit les réponses aux questionnaires (data/feedback)
       volumes:
         - name: data
           persistentVolumeClaim:

@@ -1,0 +1,60 @@
+# Tableau de bord Streamlit : il interroge l'API par son nom de Service (DNS interne, lab 1)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: garmin-dashboard
+  namespace: garmin-run
+  labels:
+    app: garmin-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: garmin-dashboard
+  template:
+    metadata:
+      labels:
+        app: garmin-dashboard
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+      containers:
+        - name: dashboard
+          image: ghcr.io/edouardmnt/garmin-run:latest
+          imagePullPolicy: Always
+          command: ["streamlit", "run", "dashboard/app.py", "--server.port=8501", "--server.address=0.0.0.0",
+                    "--server.headless=true", "--browser.gatherUsageStats=false"]
+          env:
+            - name: RUNLAB_API_URL
+              value: http://garmin-api        # le Service de l'API, résolu par CoreDNS
+            - name: HOME
+              value: /tmp                     # Streamlit écrit sa configuration dans le dossier personnel
+          ports:
+            - containerPort: 8501
+          readinessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: garmin-dashboard
+  namespace: garmin-run
+spec:
+  type: ClusterIP
+  selector:
+    app: garmin-dashboard
+  ports:
+    - port: 80
+      targetPort: 8501

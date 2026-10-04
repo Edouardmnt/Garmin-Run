@@ -1,0 +1,10 @@
+# Thème de base du tableau de bord (complété par dashboard/style.css)
+[theme]
+base = "light"
+primaryColor = "#4B2A7B"
+backgroundColor = "#EEF0F5"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1B1F3B"
+
+[browser]
+gatherUsageStats = false

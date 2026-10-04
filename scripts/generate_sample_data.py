@@ -11,7 +11,7 @@ import json
 import math
 import os
 import random
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,6 +72,14 @@ def fastest_splits(distance, speed) -> dict:
     return out
 
 
+def sleep_times(day: date, sleep_s: float, weekend: bool) -> dict:
+    """Coucher vers 23 h en semaine, minuit le week-end ; lever après la durée de sommeil (heure locale, ms)."""
+    bedtime = datetime.combine(day - timedelta(days=1), datetime.min.time()) + timedelta(hours=24 if weekend else 23)
+    wake = bedtime + timedelta(seconds=sleep_s * 1.05)
+    to_ms = lambda t: int(t.replace(tzinfo=timezone.utc).timestamp() * 1000)  # noqa: E731
+    return {"sleepStartTimestampLocal": to_ms(bedtime), "sleepEndTimestampLocal": to_ms(wake)}
+
+
 def trimp(duration_s: float, avg_hr: float) -> float:
     hrr = (avg_hr - HR_REST) / (HR_MAX - HR_REST)
     return duration_s / 60 * hrr * 0.64 * math.exp(1.92 * hrr)
@@ -79,7 +87,7 @@ def trimp(duration_s: float, avg_hr: float) -> float:
 
 def main() -> None:
     random.seed(SEED)
-    start = date.today() - timedelta(days=DAYS)
+    start = date(2026, 9, 30) - timedelta(days=DAYS)  # date fixe : données identiques partout, tout le temps
     activities, atl, hrv_base = [], 0.0, 65.0
     (OUT_DIR / "daily").mkdir(parents=True, exist_ok=True)
 
@@ -120,6 +128,7 @@ def main() -> None:
                 "remSleepSeconds": round(sleep_s * 0.22),
                 "awakeSleepSeconds": round(sleep_s * 0.05),
                 "sleepScores": {"overall": {"value": int(min(100, max(30, 50 + 6 * (sleep_h - 6) + random.gauss(0, 6))))}},
+                **sleep_times(day, sleep_s, weekend),
             }}
         record = {
             "date": day.isoformat(),
@@ -132,9 +141,13 @@ def main() -> None:
             "stats": {
                 "restingHeartRate": round(resting_hr),
                 "totalSteps": random.randint(5000, 14000),
-                "averageStressLevel": random.randint(20, 45),
-                "bodyBatteryHighestValue": random.randint(60, 100),
-                "bodyBatteryLowestValue": random.randint(5, 30),
+                "averageStressLevel": (stress := random.randint(20, 45)),
+                "bodyBatteryHighestValue": (bb_high := random.randint(60, 100)),
+                "bodyBatteryLowestValue": (bb_low := random.randint(5, 30)),
+                "maxStressLevel": min(99, stress * 2 + 5),
+                "highStressDuration": max(0, stress - 25) * 180,
+                "bodyBatteryChargedValue": bb_high - bb_low + 10,
+                "bodyBatteryDrainedValue": bb_high - bb_low,
             },
         }
         (OUT_DIR / "daily" / f"{day.isoformat()}.json").write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")

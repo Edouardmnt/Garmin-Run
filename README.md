@@ -123,6 +123,13 @@ uvicorn api.main:app --reload     # documentation interactive : http://127.0.0.1
 | `GET /forme` | VFC et sommeil par rapport à la normale personnelle, charge aiguë et chronique, fraîcheur, ajustement du chrono du jour |
 | `GET /predictions?distance=10k&denivele_m=150` | Temps sur 5 km, 10 km, semi et marathon : sur le plat, sur le parcours visé (D+), et ajusté à la forme du jour ; prédiction de la montre pour comparaison |
 | `GET /allures` | Allures d'entraînement personnelles (EF, tempo, fractionné) : observées dans les séances étiquetées, modèle FC → allure, et théorie VDOT pour comparaison ; allure max (meilleur km) |
+| `GET /historique?jours=90` | Série quotidienne pour les graphiques : charge par sport, ATL/CTL/TSB, VFC, FC de repos, sommeil |
+| `GET /analyse` | Verdict du jour (indice sur 100, qui tient compte du stress, de la Body Battery et des douleurs signalées) et analyses rédigées : charge, forme, récupération, sommeil, dernière nuit, journée, stress, activités de la semaine |
+| `GET /planning?distance=semi&date_course=2026-12-13&jours_tennis=1,3` | Plan d'entraînement jusqu'à la course : phases, séances détaillées, allures et FC personnelles, séance du jour adaptée à la forme |
+| `GET /questionnaire` | Questionnaire (3 à 5 questions) sur la dernière sortie sans réponse |
+| `POST /questionnaire/{id}` | Enregistre les réponses : type de séance, effort ressenti, douleur, justesse du temps prédit ou de l'allure, forme avant le départ |
+| `GET /questionnaire/bilan` | Ce que les questionnaires disent de la justesse des prédictions, des allures et du verdict |
+| `GET /nutrition?distance=semi&temperature_c=22` | Nutrition et hydratation avant, pendant (avec repères en minutes et en kilomètres) et après la course |
 | `GET /seances` | Dernières sorties avec leur type (étiquette personnelle, sinon suggestion par règles) |
 
 **Méthode de prédiction** (`processing/performance.py`) : les formules de **Daniels et Gilbert (VDOT)** transforment une performance réelle en indicateur de capacité aérobie, puis en temps sur chaque distance et en allures d'entraînement. Les tests vérifient la conformité aux tables publiées de Daniels. Les performances utilisées sont les courses étiquetées et les meilleurs temps sur 1, 5 et 10 km calculés par Garmin dans chaque sortie, sur les 90 derniers jours.
@@ -137,6 +144,33 @@ Sur Kubernetes, l'API tourne dans un `Deployment` avec sondes de disponibilité 
 kubectl -n garmin-run port-forward svc/garmin-api 8000:80
 ```
 
+## Tableau de bord
+
+Une interface **Streamlit** à l'identité « piste et dossard » (violet de piste, chiffres condensés façon dossard) :
+
+| Page | Contenu |
+|---|---|
+| **Accueil** | Temps prédit sur 10 km aujourd'hui, affiché comme un dossard ; verdict du jour (feu vert, séance modérée, récupération) avec ses raisons ; prochaines séances ; résumé de la semaine |
+| **Ma forme** | Charge par sport, forme et fatigue, récupération (VFC dans sa zone normale), sommeil et FC de repos : chaque graphique est suivi de « Comment le lire » et d'une analyse rédigée à partir des données de la personne |
+| **Nuits & journées** | Phases de sommeil des 14 dernières nuits, heure de coucher, stress quotidien et Body Battery, temps passé dans chaque sport ; chaque graphique est expliqué et analysé |
+| **Planning** | Plan jusqu'à la course : phases (développement, spécifique, affûtage), jours de tennis respectés, séances détaillées avec allures et FC personnelles, adapté aux douleurs signalées, au sommeil, au stress et au ressenti des footings |
+| **Prédictions** | Temps sur chaque distance, avec D+ et forme du jour, comparé à la montre, le détail du calcul, et la nutrition et l'hydratation adaptées à la durée prévue et à la température |
+| **Allures** | Échelle visuelle des allures (EF, tempo, fractionné, allures de course) et leur origine |
+| **Séances** | Historique filtrable par type | Elle ne lit jamais les données directement : elle **interroge l'API**, comme le fera le coach IA, pour que tout le monde s'appuie sur les mêmes calculs.
+
+```bash
+uvicorn api.main:app            # terminal 1 : l'API
+streamlit run dashboard/app.py  # terminal 2 : l'interface, sur http://localhost:8501
+```
+
+Sur Kubernetes, le tableau de bord tourne dans son propre `Deployment` et joint l'API par le nom de son Service (`http://garmin-api`), résolu par le DNS interne du cluster (`k8s/50-dashboard.yaml`) :
+
+```bash
+kubectl -n garmin-run port-forward svc/garmin-dashboard 8501:80
+```
+
+Chaque page est testée automatiquement avec l'outil de test de Streamlit (`tests/test_dashboard.py`).
+
 ## Avec ses propres données Garmin
 
 ```bash
@@ -150,6 +184,22 @@ jupyter notebook notebooks/01_exploration.ipynb
 L'export utilise la bibliothèque non officielle [python-garminconnect](https://github.com/cyberjunky/python-garminconnect). Elle peut cesser de fonctionner quand Garmin modifie son système de connexion, et Garmin peut limiter temporairement les connexions trop fréquentes (erreur 429). À utiliser uniquement sur son propre compte, avec une synchronisation quotidienne au maximum.
 
 ---
+
+## Questionnaire après chaque sortie
+
+Après chaque sortie de course, l'accueil propose 3 à 5 questions (4 pour un footing, 5 pour une séance de qualité ou une course). Les réponses améliorent directement l'application :
+
+| Question | Ce que la réponse change |
+|---|---|
+| Type de séance | Devient l'étiquette de la sortie : classification, allures observées, chronos de référence |
+| Effort ressenti | Des footings ressentis comme difficiles ralentissent les allures d'endurance du planning |
+| Douleur | Plafonne le verdict du jour et réduit le volume du planning |
+| Temps prédit ou allure conseillée | Mesure la justesse des prédictions et des allures (`/questionnaire/bilan`) |
+| Forme avant le départ | Vérifie que le verdict du jour correspond au ressenti |
+
+## Nutrition et hydratation
+
+Les conseils (`processing/nutrition.py`) reprennent les repères de la prise de position conjointe ACSM, Academy of Nutrition and Dietetics et Dietitians of Canada (2016) : pas de glucides nécessaires sous une heure, 30 à 60 g par heure jusqu'à 2 h 30, jusqu'à 60 à 90 g par heure au-delà ; boisson adaptée à la température ; sodium pour les efforts longs ou chauds. Ce sont des repères généraux, à tester à l'entraînement.
 
 ## Tests et intégration continue
 
@@ -267,7 +317,11 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 ├── processing/
 │   ├── build_silver.py          # bronze -> silver (Parquet)
 │   ├── build_gold.py            # silver -> gold (TRIMP, ATL, CTL, TSB)
-│   └── performance.py           # VDOT, temps prédits, allures, ajustement du jour
+│   ├── performance.py           # VDOT, temps prédits, allures, ajustement du jour
+│   ├── insights.py              # verdict du jour et analyses rédigées (nuit, journée, stress, activités)
+│   ├── feedback.py              # questionnaire après sortie et exploitation des réponses
+│   ├── nutrition.py             # nutrition et hydratation de course
+│   └── planning.py              # plan d'entraînement jusqu'à la course
 ├── scripts/
 │   ├── generate_sample_data.py  # données Garmin synthétiques pour la démo
 │   ├── generate_sample_lifesnaps.py # données LifeSnaps synthétiques pour les tests
@@ -284,7 +338,10 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 ├── notebooks/
 │   └── 01_exploration.ipynb     # analyse exploratoire et conclusions
 ├── api/
-│   └── main.py                  # API FastAPI (forme, prédictions, allures, séances)
+│   └── main.py                  # API FastAPI (forme, prédictions, allures, historique, séances)
+├── dashboard/
+│   ├── app.py                   # tableau de bord Streamlit, client de l'API
+│   └── style.css                # direction artistique « piste et dossard »
 ├── k8s/                         # manifestes Kubernetes (namespace, volume, config, CronJob, API)
 │   └── tools/data-loader.yaml   # pod utilitaire pour accéder au volume
 ├── tests/                       # tests unitaires et de bout en bout (pytest)
@@ -318,7 +375,8 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 - [x] Déploiement sur Kubernetes : CronJob de synchronisation quotidienne, volume persistant, ConfigMap et Secret
 - [x] Classification des sorties (EF, tempo, fractionné, course) : règles et étiquetage interactif
 - [x] API FastAPI sur Kubernetes : forme du jour, temps prédits (VDOT), allures d'entraînement
-- [ ] Tableau de bord
+- [x] Tableau de bord Streamlit (forme, prédictions, allures, historique, séances), déployé sur Kubernetes
+- [x] Questionnaire après sortie, planning personnalisé, nutrition et hydratation
 - [ ] Coach IA hebdomadaire basé sur un LLM
 - [ ] Monitoring et détection de dérive
 

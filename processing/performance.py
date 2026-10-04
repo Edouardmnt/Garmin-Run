@@ -293,6 +293,8 @@ def observed_paces(runs: pd.DataFrame, hr_max: float) -> dict:
             "seances": int(len(paces)),
             "allure_rapide": format_time(paces.quantile(0.25)) + "/km",
             "allure_lente": format_time(paces.quantile(0.75)) + "/km",
+            "allure_rapide_s": round(float(paces.quantile(0.25))),
+            "allure_lente_s": round(float(paces.quantile(0.75))),
             "allure_mediane": format_time(paces.median()) + "/km",
             "allure_mediane_s": round(float(paces.median())),
             "allure_reelle_mediane": format_time(g["raw_pace_s"].median()) + "/km",
@@ -331,16 +333,22 @@ def personal_training_paces(runs: pd.DataFrame, hr_max: float, vdot_value: float
         entry = {"observe": observed.get(kind)}
         low_pct, high_pct = HR_TARGETS[kind]
         if model:
+            fast_s, slow_s = pace_at_hr(model, high_pct * hr_max), pace_at_hr(model, low_pct * hr_max)
             entry["modele_fc"] = {
                 "fc_cible": [round(low_pct * hr_max), round(high_pct * hr_max)],
-                "allure_rapide": format_time(pace_at_hr(model, high_pct * hr_max)) + "/km",
-                "allure_lente": format_time(pace_at_hr(model, low_pct * hr_max)) + "/km",
+                "allure_rapide": format_time(fast_s) + "/km",
+                "allure_lente": format_time(slow_s) + "/km",
+                "allure_rapide_s": round(fast_s),
+                "allure_lente_s": round(slow_s),
             }
         if vdot_value:
             low, high, _ = TRAINING_ZONES[VDOT_EQUIVALENT[kind]]
+            fast_s, slow_s = pace_at_fraction(vdot_value, high), pace_at_fraction(vdot_value, low)
             entry["theorique_vdot"] = {
-                "allure_rapide": format_time(pace_at_fraction(vdot_value, high)) + "/km",
-                "allure_lente": format_time(pace_at_fraction(vdot_value, low)) + "/km",
+                "allure_rapide": format_time(fast_s) + "/km",
+                "allure_lente": format_time(slow_s) + "/km",
+                "allure_rapide_s": round(fast_s),
+                "allure_lente_s": round(slow_s),
             }
         if entry["observe"] and entry["observe"]["seances"] >= MIN_OBSERVED[kind]:
             source = "observe"
@@ -355,6 +363,8 @@ def personal_training_paces(runs: pd.DataFrame, hr_max: float, vdot_value: float
             "source": source,
             "allure_rapide": chosen.get("allure_rapide"),
             "allure_lente": chosen.get("allure_lente"),
+            "allure_rapide_s": chosen.get("allure_rapide_s"),
+            "allure_lente_s": chosen.get("allure_lente_s"),
             "fc_cible": chosen.get("fc_fourchette") or chosen.get("fc_cible")
             or (entry["modele_fc"]["fc_cible"] if "modele_fc" in entry else None),
         }
