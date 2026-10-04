@@ -12,7 +12,10 @@ from processing.performance import (
     garmin_predictions,
     hr_speed_vo2max,
     pace_at_fraction,
+    personal_training_paces,
     predict_time_s,
+    race_effort,
+    recent_runs,
     vdot,
     vo2_at_speed,
 )
@@ -119,3 +122,37 @@ def test_prediction_10k_coherente_avec_une_course_recente():
     acts = activities((1, "running", "2026-09-28 09:00", 10000, 2850, None, None, None))
     est = estimate_vdot(collect_performances(acts, labels({1: "course"})), {}, TODAY)
     assert predict_time_s(est["vdot"], 10000) == pytest.approx(2850, rel=0.01)  # 3 jours d'ancienneté : quasi identique
+
+
+# --- Chrono des courses et allures personnelles ----------------------------------------------------
+
+def test_course_chronometree_sur_la_distance_officielle():
+    # Enregistrement de 10,6 km en 52 min (échauffement inclus), meilleur 10 km de l'activité : 47'30"
+    run = pd.Series({"distance_m": 10600, "duration_s": 3120, "moving_duration_s": 3100, "fastest_10k_s": 2850.0})
+    assert race_effort(run) == (10000.0, 2850.0)
+
+
+def session(i, kind, pace_s, hr, fastest_1k=None, km=8):
+    return {"activity_id": i, "sport": "running", "start_time": f"2026-09-{i:02d} 08:00", "distance_m": km * 1000,
+            "duration_s": pace_s * km, "moving_duration_s": pace_s * km, "avg_hr": hr, "fastest_1k_s": fastest_1k,
+            "kind": kind}
+
+
+def test_allures_observees_et_recommandation():
+    rows = [session(1, "ef", 345, 140), session(2, "ef", 350, 142), session(3, "ef", 340, 138), session(4, "ef", 355, 141),
+            session(5, "tempo", 290, 168), session(6, "tempo", 295, 170),
+            session(7, "fractionne", 330, 160, fastest_1k=235), session(8, "fractionne", 335, 158, fastest_1k=240)]
+    acts = pd.DataFrame(rows)
+    labels_df = pd.DataFrame({"activity_id": acts["activity_id"], "label": acts["kind"], "suggestion": "ef"})
+    runs = recent_runs(acts.drop(columns="kind"), labels_df, TODAY, 120)
+    paces = personal_training_paces(runs, hr_max=193, vdot_value=43)
+
+    ef = paces["zones"]["ef"]
+    assert ef["recommandation"]["source"] == "observe"
+    assert ef["observe"]["allure_mediane_s"] == 348  # médiane de 340, 345, 350, 355
+    # Fractionné : allure des meilleurs km, pas l'allure moyenne de la séance
+    assert paces["zones"]["fractionne"]["observe"]["allure_mediane"].startswith("3'5")
+    # Modèle FC -> allure : appris sur EF + tempo, plus rapide quand la FC monte
+    model_ef = ef["modele_fc"]
+    assert model_ef["allure_rapide"] < model_ef["allure_lente"]
+    assert paces["allure_max"]["meilleur_1km"] == "3'55\"/km"

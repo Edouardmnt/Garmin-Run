@@ -71,8 +71,8 @@ def riegel_time_s(known_m: float, known_s: float, target_m: float) -> float:
 # --- Performances personnelles -------------------------------------------------------------------
 
 HARD_SESSIONS = {"course", "tempo", "fractionne"}  # seuls efforts assez intenses pour refléter la capacité
-DECAY_PER_DAY = 0.001        # une performance perd 0,1 % de valeur par jour d'ancienneté (~3 % par mois)
-MAX_DECAY = 0.15             # au plus -15 %, même pour une performance très ancienne
+DECAY_PER_DAY = 0.0003       # une performance perd ~1 % de valeur par mois d'ancienneté
+MAX_DECAY = 0.10             # au plus -10 %, même pour une performance très ancienne
 CALIBRATION_BOUNDS = (0.75, 1.10)
 
 
@@ -84,6 +84,19 @@ def session_types(labels: pd.DataFrame | None) -> dict:
     return dict(zip(labels["activity_id"], label))
 
 
+def race_effort(run: pd.Series) -> tuple[float, float]:
+    """Chrono d'une course : le meilleur temps sur la distance officielle calculé par Garmin dans l'activité.
+
+    La durée totale de l'enregistrement peut inclure l'échauffement, la marche après l'arrivée
+    ou une montre arrêtée en retard ; le meilleur 10 km (ou 5 km) de l'activité ne les contient pas.
+    """
+    for distance, col in ((10000.0, "fastest_10k_s"), (5000.0, "fastest_5k_s")):
+        if run["distance_m"] >= distance * 0.97 and pd.notna(run.get(col)):
+            return distance, float(run[col])
+    moving = run.get("moving_duration_s")
+    return float(run["distance_m"]), float(moving if pd.notna(moving) else run["duration_s"])
+
+
 def collect_performances(activities: pd.DataFrame, labels: pd.DataFrame | None = None) -> pd.DataFrame:
     """Performances utilisables : TOUTES les courses, et les meilleurs 5/10 km des seances dures uniquement."""
     runs = activities[activities["sport"] == "running"].copy()
@@ -92,7 +105,8 @@ def collect_performances(activities: pd.DataFrame, labels: pd.DataFrame | None =
     rows = []
 
     for _, r in runs[runs["kind"] == "course"].iterrows():
-        rows.append({"date": r["date"], "distance_m": r["distance_m"], "time_s": r["duration_s"], "source": "course"})
+        distance, time_s = race_effort(r)
+        rows.append({"date": r["date"], "distance_m": distance, "time_s": time_s, "source": "course"})
 
     hard = runs[runs["kind"].isin(HARD_SESSIONS - {"course"})]
     for col, dist in (("fastest_5k_s", 5000.0), ("fastest_10k_s", 10000.0)):
@@ -205,6 +219,115 @@ def estimate_vdot(perf: pd.DataFrame, physio: dict[str, pd.DataFrame], today: da
     if not estimates:
         return None
     return {"vdot": float(np.mean(estimates)), "composantes": components, "courses_etiquetees": len(races)}
+
+
+# --- Allures personnelles observées ---------------------------------------------------------------
+
+SESSION_TYPES = ["ef", "tempo", "fractionne", "course"]
+# Cibles de FC (% de la FC max) utilisées avec le modèle FC -> allure quand les séances observées manquent
+HR_TARGETS = {"ef": (0.65, 0.75), "tempo": (0.84, 0.89), "fractionne": (0.90, 0.95)}
+VDOT_EQUIVALENT = {"ef": "ef", "tempo": "seuil", "fractionne": "fractionne"}
+MIN_OBSERVED = {"ef": 3, "tempo": 2, "fractionne": 2, "course": 1}
+
+
+def recent_runs(activities: pd.DataFrame, labels: pd.DataFrame | None, today: date, window_days: int) -> pd.DataFrame:
+    runs = activities[activities["sport"] == "running"].copy()
+    runs["date"] = pd.to_datetime(runs["start_time"]).dt.normalize()
+    runs = runs[runs["date"] >= pd.Timestamp(today) - pd.Timedelta(days=window_days)]
+    runs["kind"] = runs["activity_id"].map(session_types(labels))
+    moving = runs["moving_duration_s"].fillna(runs["duration_s"]) if "moving_duration_s" in runs else runs["duration_s"]
+    runs["pace_s"] = moving / (runs["distance_m"] / 1000)
+    return runs[runs["pace_s"].between(MIN_PACE_S, MAX_PACE_S)]
+
+
+def observed_paces(runs: pd.DataFrame, hr_max: float) -> dict:
+    """Allures et FC réellement pratiquées dans chaque type de séance (quartiles : la moitié centrale)."""
+    out = {}
+    for kind in SESSION_TYPES:
+        g = runs[runs["kind"] == kind]
+        # Fractionné : l'allure moyenne mélange efforts et récupérations -> on prend le meilleur km de la séance
+        paces = g["fastest_1k_s"].dropna() if kind == "fractionne" else g["pace_s"]
+        if paces.empty:
+            continue
+        hr = g["avg_hr"].dropna()
+        out[kind] = {
+            "seances": int(len(paces)),
+            "allure_rapide": format_time(paces.quantile(0.25)) + "/km",
+            "allure_lente": format_time(paces.quantile(0.75)) + "/km",
+            "allure_mediane": format_time(paces.median()) + "/km",
+            "allure_mediane_s": round(float(paces.median())),
+            "fc_moyenne": None if hr.empty else round(float(hr.median())),
+            "fc_fourchette": None if hr.empty else [round(float(hr.quantile(0.25))), round(float(hr.quantile(0.75)))],
+            "fc_pct_max": None if hr.empty else round(float(hr.median()) / hr_max * 100),
+        }
+    return out
+
+
+def hr_pace_model(runs: pd.DataFrame) -> dict | None:
+    """Relation personnelle FC -> vitesse, apprise sur les sorties régulières (hors fractionné)."""
+    steady = runs[runs["kind"].isin(["ef", "tempo", "course"]) & runs["avg_hr"].notna()]
+    if len(steady) < 5 or steady["avg_hr"].nunique() < 3:
+        return None
+    speed = 1000 / steady["pace_s"]  # m/s
+    slope, intercept = np.polyfit(steady["avg_hr"], speed, 1)
+    if slope <= 0:
+        return None  # relation incohérente (chaleur, dénivelé...) : on ne s'en sert pas
+    predicted = intercept + slope * steady["avg_hr"]
+    r2 = 1 - ((speed - predicted) ** 2).sum() / ((speed - speed.mean()) ** 2).sum()
+    return {"pente": float(slope), "ordonnee": float(intercept), "r2": float(r2), "sorties": int(len(steady))}
+
+
+def pace_at_hr(model: dict, hr: float) -> float:
+    return 1000 / (model["ordonnee"] + model["pente"] * hr)
+
+
+def personal_training_paces(runs: pd.DataFrame, hr_max: float, vdot_value: float | None) -> dict:
+    """Allures recommandées : observées si assez de séances, sinon modèle FC -> allure, sinon théorie VDOT."""
+    observed = observed_paces(runs, hr_max)
+    model = hr_pace_model(runs)
+    zones = {}
+    for kind in ["ef", "tempo", "fractionne"]:
+        entry = {"observe": observed.get(kind)}
+        low_pct, high_pct = HR_TARGETS[kind]
+        if model:
+            entry["modele_fc"] = {
+                "fc_cible": [round(low_pct * hr_max), round(high_pct * hr_max)],
+                "allure_rapide": format_time(pace_at_hr(model, high_pct * hr_max)) + "/km",
+                "allure_lente": format_time(pace_at_hr(model, low_pct * hr_max)) + "/km",
+            }
+        if vdot_value:
+            low, high, _ = TRAINING_ZONES[VDOT_EQUIVALENT[kind]]
+            entry["theorique_vdot"] = {
+                "allure_rapide": format_time(pace_at_fraction(vdot_value, high)) + "/km",
+                "allure_lente": format_time(pace_at_fraction(vdot_value, low)) + "/km",
+            }
+        if entry["observe"] and entry["observe"]["seances"] >= MIN_OBSERVED[kind]:
+            source = "observe"
+        elif "modele_fc" in entry and kind != "fractionne":  # la FC réagit trop lentement sur des répétitions courtes
+            source = "modele_fc"
+        elif "theorique_vdot" in entry:
+            source = "theorique_vdot"
+        else:
+            source = "observe" if entry["observe"] else None
+        chosen = entry.get(source) or {}
+        entry["recommandation"] = {
+            "source": source,
+            "allure_rapide": chosen.get("allure_rapide"),
+            "allure_lente": chosen.get("allure_lente"),
+            "fc_cible": chosen.get("fc_fourchette") or chosen.get("fc_cible")
+            or (entry["modele_fc"]["fc_cible"] if "modele_fc" in entry else None),
+        }
+        zones[kind] = entry
+    best_1k = runs["fastest_1k_s"].dropna()
+    return {
+        "allure_max": None if best_1k.empty else {
+            "meilleur_1km": format_time(best_1k.min()) + "/km",
+            "date": runs.loc[best_1k.idxmin(), "date"].date().isoformat(),
+        },
+        "modele_fc_allure": None if model is None else {"r2": round(model["r2"], 2), "sorties": model["sorties"]},
+        "courses_observees": observed.get("course"),
+        "zones": zones,
+    }
 
 
 def garmin_predictions(raw) -> dict:

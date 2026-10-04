@@ -54,5 +54,7 @@ def test_distance_invalide_refusee(client):
 
 
 def test_allures_et_seances(client):
-    assert set(client.get("/allures").json()["allures"]) == {"ef", "marathon", "seuil", "fractionne", "vitesse"}
+    body = client.get("/allures", params={"fenetre_jours": 180}).json()
+    assert set(body["zones"]) == {"ef", "tempo", "fractionne"}
+    assert all(z["recommandation"]["allure_rapide"] for z in body["zones"].values())
     assert len(client.get("/seances", params={"limite": 3}).json()["seances"]) == 3

@@ -18,7 +18,6 @@ from fastapi import FastAPI, HTTPException, Query
 
 from processing.performance import (
     DISTANCES_M,
-    TRAINING_ZONES,
     collect_performances,
     day_adjustment,
     day_state,
@@ -26,8 +25,9 @@ from processing.performance import (
     format_time,
     garmin_predictions,
     hr_speed_vo2max,
-    pace_at_fraction,
+    personal_training_paces,
     predict_time_s,
+    recent_runs,
     vo2max_history,
 )
 
@@ -149,17 +149,19 @@ def predictions(
 
 
 @app.get("/allures", tags=["performance"])
-def allures() -> dict:
-    """Allures d'entraînement personnalisées (fourchettes), déduites du VDOT actuel."""
-    _, _, estimate = current_estimate()
-    zones = {}
-    for name, (low, high, description) in TRAINING_ZONES.items():
-        zones[name] = {
-            "allure_min": pace_txt(pace_at_fraction(estimate["vdot"], high)),  # la plus rapide
-            "allure_max": pace_txt(pace_at_fraction(estimate["vdot"], low)),   # la plus lente
-            "description": description,
-        }
-    return {"vdot": round(estimate["vdot"], 1), "allures": zones}
+def allures(fenetre_jours: int = Query(120, ge=14, le=365, description="Période d'observation des séances")) -> dict:
+    """Allures d'entraînement personnelles, calculées à partir de tes séances réelles.
+
+    Pour l'EF, le tempo et le fractionné : allures et FC observées dans tes séances étiquetées,
+    ton modèle FC -> allure, et la valeur théorique (VDOT) pour comparaison. La recommandation
+    retient l'observation quand il y a assez de séances, sinon le modèle, sinon la théorie.
+    """
+    gold, _, estimate = current_estimate()
+    activities = read_parquet("silver/activities.parquet")
+    hr_max = float(activities["max_hr"].max())
+    runs = recent_runs(activities, read_labels(), reference_day(gold), fenetre_jours)
+    paces = personal_training_paces(runs, hr_max, estimate["vdot"])
+    return {"fenetre_jours": fenetre_jours, "fc_max": round(hr_max), "vdot": round(estimate["vdot"], 1), **paces}
 
 
 @app.get("/seances", tags=["historique"])

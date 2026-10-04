@@ -122,7 +122,7 @@ uvicorn api.main:app --reload     # documentation interactive : http://127.0.0.1
 |---|---|
 | `GET /forme` | VFC et sommeil par rapport à la normale personnelle, charge aiguë et chronique, fraîcheur, ajustement du chrono du jour |
 | `GET /predictions?distance=10k` | Temps de base et temps ajusté à la forme du jour sur 5 km, 10 km, semi et marathon, avec la référence de Riegel |
-| `GET /allures` | Allures d'entraînement personnalisées : EF, marathon, seuil, fractionné long, vitesse |
+| `GET /allures` | Allures d'entraînement personnelles (EF, tempo, fractionné) : observées dans les séances étiquetées, modèle FC → allure, et théorie VDOT pour comparaison ; allure max (meilleur km) |
 | `GET /seances` | Dernières sorties avec leur type (étiquette personnelle, sinon suggestion par règles) |
 
 **Méthode de prédiction** (`processing/performance.py`) : les formules de **Daniels et Gilbert (VDOT)** transforment une performance réelle en indicateur de capacité aérobie, puis en temps sur chaque distance et en allures d'entraînement. Les tests vérifient la conformité aux tables publiées de Daniels. Les performances utilisées sont les courses étiquetées et les meilleurs temps sur 1, 5 et 10 km calculés par Garmin dans chaque sortie, sur les 90 derniers jours.
