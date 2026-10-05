@@ -189,3 +189,28 @@ def test_course_vallonnee_convertie_en_plat():
     perf = collect_performances(acts, labels({1: "course"}))
     assert perf["distance_m"].iloc[0] == pytest.approx(flat_equivalent_m(10000, 120))
     assert perf["vdot"].iloc[0] > vdot(10000, 3000)  # 50 min avec du D+ vaut mieux que 50 min sur le plat
+
+
+# --- Dérive cardiaque et dépréciation liée à la charge ------------------------------------------
+
+def test_sortie_longue_exclue_de_la_relation_fc_vitesse():
+    base = {"sport": "running", "start_time": "2026-09-28 08:00", "avg_hr": 152.0, "elevation_gain_m": 0}
+    acts = pd.DataFrame([
+        {**base, "activity_id": 1, "distance_m": 8000, "duration_s": 45 * 60, "avg_speed_ms": 8000 / 2700},
+        {**base, "activity_id": 2, "distance_m": 14000, "duration_s": 95 * 60, "avg_speed_ms": 14000 / 5700},
+    ])
+    est = hr_speed_vo2max(acts, labels({1: "ef", 2: "ef"}), hr_rest=42, hr_max=193)
+    assert len(est) == 1  # la sortie de 95 min (dérive cardiaque) n'entre pas dans l'estimation
+
+
+def test_pas_de_depreciation_si_la_charge_est_maintenue():
+    from processing.performance import MAX_DECAY, decay_factors
+
+    perf = pd.DataFrame({"date": pd.to_datetime(["2026-05-17"]), "vdot": [43.0]})
+    dates = pd.date_range("2026-05-01", "2026-10-01")
+    maintained = pd.Series(40.0, index=dates)
+    halved = pd.Series([40.0 if d < pd.Timestamp("2026-09-01") else 20.0 for d in dates], index=dates)
+    assert decay_factors(perf, TODAY, maintained).iloc[0] == 0  # forme de fond maintenue : rien n'est perdu
+    full = decay_factors(perf, TODAY).iloc[0]  # sans série de charge : dépréciation complète
+    assert 0 < full <= MAX_DECAY
+    assert decay_factors(perf, TODAY, halved).iloc[0] == pytest.approx(full / 2)  # charge divisée par 2

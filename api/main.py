@@ -117,16 +117,21 @@ def estimation_inputs():
     return gold, perf, physio
 
 
-def estimate_on(day: date, perf: pd.DataFrame, physio: dict) -> dict | None:
+def chronic_load(gold: pd.DataFrame) -> pd.Series:
+    """Charge chronique (CTL) au fil du temps : sert à savoir si la forme d'une performance est maintenue."""
+    return gold.assign(date=pd.to_datetime(gold["date"])).set_index("date")["ctl"]
+
+
+def estimate_on(day: date, perf: pd.DataFrame, physio: dict, load: pd.Series | None = None) -> dict | None:
     """Niveau estimé tel qu'il était connu à une date : seules les données antérieures sont utilisées."""
     limit = pd.Timestamp(day)
     past = {name: series[series["date"] <= limit] for name, series in physio.items()}
-    return estimate_vdot(perf[perf["date"] <= limit], past, day)
+    return estimate_vdot(perf[perf["date"] <= limit], past, day, None if load is None else load[load.index <= limit])
 
 
 def current_estimate():
     gold, perf, physio = estimation_inputs()
-    estimate = estimate_vdot(perf, physio, reference_day(gold))
+    estimate = estimate_vdot(perf, physio, reference_day(gold), chronic_load(gold))
     if estimate is None:
         raise HTTPException(404, "Ni VO2 max récente ni performance exploitable : impossible d'estimer ta forme.")
     return gold, perf, estimate
@@ -430,7 +435,7 @@ def suivi_objectif(goal_id: str, semaines: int = Query(12, ge=2, le=52)) -> dict
     points = []
     for weeks_ago in range(semaines - 1, -1, -1):
         day = today - timedelta(weeks=weeks_ago)
-        estimate = estimate_on(day, perf, physio)
+        estimate = estimate_on(day, perf, physio, chronic_load(gold))
         if estimate:
             t = race_time_s(estimate["vdot"], goal_km(goal) * 1000, goal["denivele_m"], bias)
             points.append({"date": day.isoformat(), "temps_predit_s": round(t), "temps_predit": format_time(t)})

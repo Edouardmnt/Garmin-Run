@@ -178,18 +178,25 @@ def vo2max_history(activities: pd.DataFrame) -> pd.DataFrame:
     return v[["date", "vo2max"]].sort_values("date").reset_index(drop=True)
 
 
+# Au-delà de ~75 min, la fréquence cardiaque monte à allure constante (dérive cardiaque : chaleur,
+# déshydratation, fatigue) : la FC moyenne surestime l'effort et sous-estimerait la VO2 max.
+STEADY_MIN_S, STEADY_MAX_S = 20 * 60, 75 * 60
+
+
 def hr_speed_vo2max(activities: pd.DataFrame, labels: pd.DataFrame | None, hr_rest: float, hr_max: float) -> pd.DataFrame:
     """VO2 max estimée sur CHAQUE sortie régulière, à partir de la relation fréquence cardiaque / vitesse.
 
     Principe : le % de réserve cardiaque est proche du % de réserve de VO2 (relation de Swain).
     Le coût en O2 de la vitesse moyenne (formule de Daniels) rapporté à ce % donne une VO2 max.
     Le dénivelé est converti en vitesse équivalente sur le plat (GAP Garmin, sinon équivalence de Scarf).
-    Exclusions : fractionné (moyennes trompeuses), sorties trop courtes ou trop faciles, trail très raide.
+    Exclusions : fractionné (moyennes trompeuses), sorties de moins de 20 ou de plus de 75 min (dérive
+    cardiaque), sorties trop faciles, trail très raide.
     """
     usable = (activities["sport"] == "running") & activities["avg_hr"].notna() & activities["avg_speed_ms"].notna()
     runs = activities[usable].copy()
     runs["kind"] = runs["activity_id"].map(session_types(labels))
-    runs = runs[(runs["duration_s"] >= 15 * 60) & (runs["distance_m"] >= 2000) & (runs["kind"] != "fractionne")]
+    steady = runs["duration_s"].between(STEADY_MIN_S, STEADY_MAX_S)  # au-delà : dérive cardiaque
+    runs = runs[steady & (runs["distance_m"] >= 2000) & (runs["kind"] != "fractionne")]
     runs = add_flat_speed(runs)
     runs = runs[runs["climb_m_per_km"] <= MAX_CLIMB_M_PER_KM]  # le dénivelé est corrigé, sauf trail très raide
     reserve = (runs["avg_hr"] - hr_rest) / (hr_max - hr_rest)
@@ -220,7 +227,29 @@ def calibration_ratio(races: pd.DataFrame, series: pd.DataFrame) -> tuple[float,
     return float(np.clip(np.median(matched["vdot"] / matched["vo2max"]), *CALIBRATION_BOUNDS)), len(matched)
 
 
-def estimate_vdot(perf: pd.DataFrame, physio: dict[str, pd.DataFrame], today: date) -> dict | None:
+def decay_factors(perf: pd.DataFrame, today: date, load: pd.Series | None = None) -> pd.Series:
+    """Part de valeur perdue par chaque performance (0 = intacte).
+
+    On ne perd sa forme que si l'on s'entraîne moins : la dépréciation liée à l'ancienneté est multipliée
+    par la baisse de la charge chronique (CTL) depuis la performance. CTL maintenue ou en hausse : aucune perte.
+    Sans série de charge, la dépréciation s'applique entièrement (repli prudent).
+    """
+    age = (pd.Timestamp(today) - perf["date"]).dt.days.clip(lower=0)
+    base = (age * DECAY_PER_DAY).clip(upper=MAX_DECAY)
+    if load is None or load.dropna().empty:
+        return base
+    series = load.dropna().sort_index()
+    current = series[series.index <= pd.Timestamp(today)]
+    if current.empty:
+        return base
+    now = float(current.iloc[-1])
+    then = perf["date"].map(lambda d: series[series.index <= d].iloc[-1] if (series.index <= d).any() else None)
+    drop = then.map(lambda t: 0.0 if t in (None, 0) or pd.isna(t) else max(0.0, 1 - now / t))
+    return base * drop
+
+
+def estimate_vdot(perf: pd.DataFrame, physio: dict[str, pd.DataFrame], today: date,
+                  load: pd.Series | None = None) -> dict | None:
     """VDOT actuel : moyenne de toutes les estimations disponibles, chacune expliquée.
 
     - sources physiologiques (VO2 max de la montre, relation FC/vitesse sur toutes les sorties),
@@ -250,8 +279,7 @@ def estimate_vdot(perf: pd.DataFrame, physio: dict[str, pd.DataFrame], today: da
         }
 
     if len(perf):
-        age = (today_ts - perf["date"]).dt.days.clip(lower=0)
-        decayed = perf["vdot"] * (1 - (age * DECAY_PER_DAY).clip(upper=MAX_DECAY))
+        decayed = perf["vdot"] * (1 - decay_factors(perf, today, load))
         best = perf.loc[decayed.idxmax()]
         estimates.append(float(decayed.max()))
         components["performances"] = {

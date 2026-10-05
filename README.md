@@ -321,6 +321,8 @@ Analyse sur environ 5 mois de données réelles (≈ 145 nuits suivies), détail
 ## Limites connues
 
 - Le TRIMP, fondé sur la fréquence cardiaque, **sous-estime la musculation**, où l'effort est réel mais le cœur monte peu.
+- La relation FC / vitesse n'utilise que les sorties de 20 à 75 minutes : au-delà, la **dérive cardiaque** (la FC monte à allure constante) ferait sous-estimer le niveau, au point de pénaliser les préparations riches en sorties longues.
+- Une performance ancienne ne perd de sa valeur que si la **charge chronique (CTL) a baissé** depuis : on ne perd pas sa forme en continuant à s'entraîner.
 - La FC maximale utilisée est la plus haute **observée**, pas forcément la vraie FC maximale.
 - Quelques mois de données personnelles : les conclusions sont exploratoires et seront réévaluées à mesure que les données s'accumulent.
 
