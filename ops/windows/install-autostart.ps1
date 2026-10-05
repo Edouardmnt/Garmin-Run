@@ -1,4 +1,4 @@
-\xef\xbb\xbf# Installe (ou réinstalle) la tâche planifiée qui démarre minikube à l'ouverture de session.
+﻿# Installe (ou réinstalle) la tâche planifiée qui démarre minikube à l'ouverture de session.
 # Usage, depuis la racine du dépôt : powershell -ExecutionPolicy Bypass -File ops\windows\install-autostart.ps1
 
 $taskName = "Garmin-Run minikube"

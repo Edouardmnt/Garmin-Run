@@ -1,4 +1,4 @@
-\xef\xbb\xbf# Rend Foulée accessible sur http://localhost:8501 en permanence.
+﻿# Rend Foulée accessible sur http://localhost:8501 en permanence.
 # kubectl port-forward s'arrête quand le Pod est remplacé (redéploiement du matin) : la boucle le relance.
 # Lancé en arrière-plan par start-minikube.ps1. Journal : %LOCALAPPDATA%\garmin-run\port-forward.log
 

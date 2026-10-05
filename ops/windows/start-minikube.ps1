@@ -1,4 +1,4 @@
-﻿\xef\xbb\xbf# Démarre Docker Desktop puis minikube automatiquement à l'ouverture de session Windows.
+﻿# Démarre Docker Desktop puis minikube automatiquement à l'ouverture de session Windows.
 # Lancé par la tâche planifiée "Garmin-Run minikube" (voir install-autostart.ps1).
 # Journal : %LOCALAPPDATA%\garmin-run\start-minikube.log
 
