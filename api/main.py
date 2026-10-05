@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import Literal
 
 import pandas as pd
+import requests
 from fastapi import Body, FastAPI, HTTPException, Query
 
+from processing.coach import BILAN_PROMPT, compact_context, get_llm, run_coach
 from processing.feedback import (
     apply_feedback_labels,
     efforts_by_activity,
@@ -578,3 +580,67 @@ def seances(limite: int = Query(10, ge=1, le=100)) -> dict:
             "type_source": "etiquette" if labelled else "regles",
         })
     return {"seances": out}
+
+
+# --- Coach IA (modèle local Ollama) ---------------------------------------------------------------
+
+def coach_tools() -> dict:
+    """Outils mis à la disposition du coach : des appels aux points d'accès de l'API, en lecture seule."""
+    def lighter_plan() -> dict:  # sans les étapes détaillées, pour ménager le contexte d'un petit modèle
+        plan = planning_actif()
+        for week in plan["semaines"]:
+            for s in week["seances"]:
+                s.pop("etapes", None)
+        return plan
+
+    return {
+        "predictions": lambda distance="10k", distance_km=None, denivele_m=0: predictions(
+            distance=distance, ajuster_au_jour=True, denivele_m=int(denivele_m or 0), distance_km=distance_km),
+        "allures": lambda: allures(fenetre_jours=120),
+        "nutrition": lambda distance="semi", distance_km=None, temperature_c=15: nutrition(
+            distance=distance, temperature_c=float(temperature_c), denivele_m=0, distance_km=distance_km),
+        "seances": lambda limite=10: seances(limite=int(limite)),
+        "planning": lighter_plan,
+        "objectifs": objectifs,
+    }
+
+
+def coach_context() -> dict:
+    return compact_context(forme(), analyse(), planning_actif(), objectifs()["objectifs"])
+
+
+def ask_coach(message: str, history: list[dict] | None = None) -> dict:
+    llm = get_llm()
+    try:
+        return run_coach(llm, message, coach_context(), coach_tools(), history)
+    except requests.RequestException as exc:
+        raise HTTPException(503, f"Le modèle local ne répond pas ({llm.model}) : {exc}. "
+                                 "Ollama est-il lancé et joignable ?") from exc
+
+
+@app.get("/coach/statut", tags=["coach"])
+def statut_coach() -> dict:
+    """Le modèle local est-il joignable et téléchargé ?"""
+    return get_llm().status()
+
+
+@app.post("/coach/question", tags=["coach"])
+def question_coach(question: str = Body(..., embed=True), historique: list[dict] = Body([], embed=True)) -> dict:
+    """Pose une question au coach. La réponse s'appuie sur tes données et indique les outils consultés."""
+    if not question.strip():
+        raise HTTPException(422, "Pose une question au coach.")
+    return ask_coach(question.strip(), historique)
+
+
+@app.get("/coach/bilan", tags=["coach"])
+def bilan_coach(regenerer: bool = False) -> dict:
+    """Bilan de la semaine, rédigé par le coach. Mis en cache pour la journée (un modèle local est lent)."""
+    gold = read_parquet("gold/daily_features.parquet")
+    path = DATA_DIR / "coach" / f"bilan-{reference_day(gold).isoformat()}.json"
+    if path.exists() and not regenerer:
+        return {**json.loads(path.read_text(encoding="utf-8")), "en_cache": True}
+    result = {**ask_coach(BILAN_PROMPT), "date": reference_day(gold).isoformat()}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {**result, "en_cache": False}
+

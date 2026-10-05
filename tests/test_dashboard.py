@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
-TITLES = {"Accueil": "Ta journée", "Objectifs": "Mes objectifs", "Ma forme": "Ma forme",
+TITLES = {"Accueil": "Ta journée", "Coach": "Ton coach", "Objectifs": "Mes objectifs", "Ma forme": "Ma forme",
           "Nuits & journées": "Nuits & journées", "Planning": "Mon planning",
           "Prédictions": "Mes prédictions", "Allures": "Mes allures", "Séances": "Mes séances"}
 
@@ -20,6 +20,7 @@ def app_env(data_dir):
     mp = pytest.MonkeyPatch()
     mp.setenv("RUNLAB_DATA_DIR", str(data_dir))
     mp.setenv("RUNLAB_API_URL", "inprocess")
+    mp.setenv("RUNLAB_LLM", "fake")  # faux modèle : pas d'Ollama dans les tests
     import importlib
 
     import api.main
@@ -115,3 +116,14 @@ def test_questionnaire_affiche_puis_enregistre(private_data):
     # Rafraîchissement automatique : le questionnaire a disparu et le message de remerciement s'affiche
     assert not [r for r in at.radio if r.key and r.key.startswith("q_")]
     assert any("Merci" in m.value for m in at.success)
+
+
+def test_coach_repond_a_une_question(app_env):
+    at = open_page("Coach")
+    assert not at.exception, at.exception
+    at.chat_input[0].set_value("Quelle allure pour mon footing ?").run()
+    assert not at.exception, at.exception
+    assert any("Réponse de test" in m.value for m in at.markdown)
+    assert any("allures" in c.value for c in at.caption)  # les données consultées sont affichées
+    next(b for b in at.button if "bilan" in b.label).click().run()
+    assert not at.exception and "bilan" in at.session_state

@@ -130,3 +130,9 @@ h3 { font-size: 1rem !important; font-weight: 600 !important; }
   .carnet .type, .carnet .chiffres { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* Coach : messages sobres */
+[data-testid="stChatMessage"] { background: transparent; border-bottom: 1px solid var(--filet); border-radius: 0; }
+.stButton button { font-weight: 500; }
+[data-testid^="stChatMessageAvatar"] { background: var(--surface) !important; color: var(--encre) !important; }
+[data-testid="stChatMessageAvatarAssistant"] { background: var(--accent) !important; color: #fff !important; }

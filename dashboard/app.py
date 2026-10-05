@@ -61,15 +61,32 @@ def api_get(path: str, params: tuple = ()) -> dict:
     return response.json()
 
 
-def post(path: str, payload: dict) -> tuple[bool, dict]:
-    """Envoie des données à l'API (questionnaire). Renvoie (succès, réponse)."""
+COACH_TIMEOUT_S = 330  # un modèle local sur processeur peut mettre plusieurs minutes à répondre
+
+
+def post(path: str, payload: dict, timeout: int = 30) -> tuple[bool, dict]:
+    """Envoie des données à l'API (questionnaire, coach). Renvoie (succès, réponse)."""
     try:
         if API_URL == "inprocess":
             response = inprocess_client().post(path, json=payload)
         else:
-            response = requests.post(f"{API_URL}{path}", json=payload, timeout=30)
+            response = requests.post(f"{API_URL}{path}", json=payload, timeout=timeout)
     except requests.ConnectionError:
         return False, {"detail": f"L'API ne répond pas à l'adresse {API_URL}."}
+    except requests.Timeout:
+        return False, {"detail": "Le coach a mis trop de temps à répondre. Réessaie, ou choisis un modèle plus léger."}
+    return response.status_code == 200, response.json()
+
+
+def get_slow(path: str, **params) -> tuple[bool, dict]:
+    """Lecture longue et non mise en cache (bilan du coach)."""
+    try:
+        if API_URL == "inprocess":
+            response = inprocess_client().get(path, params=params)
+        else:
+            response = requests.get(f"{API_URL}{path}", params=params, timeout=COACH_TIMEOUT_S)
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        return False, {"detail": str(exc)}
     return response.status_code == 200, response.json()
 
 
@@ -411,6 +428,70 @@ def page_nights() -> None:
             "le planning en tient compte pour placer tes séances de course.", analyse["activites"])
 
 
+# --- Coach ---------------------------------------------------------------------------------------
+
+SUGGESTIONS = ["Je peux faire mon fractionné ce soir ?", "Quelle allure pour mon prochain footing ?",
+               "Que manger avant ma prochaine course ?"]
+
+
+def coach_answer(question: str) -> None:
+    history = st.session_state.setdefault("coach_messages", [])
+    history.append({"role": "user", "content": question})
+    with st.spinner("Le coach consulte tes données…"):
+        ok, body = post("/coach/question", {"question": question,
+                                            "historique": [{"role": m["role"], "content": m["content"]}
+                                                           for m in history[:-1]]}, timeout=COACH_TIMEOUT_S)
+    if ok:
+        history.append({"role": "assistant", "content": body["reponse"], "outils": body["outils_utilises"]})
+    else:
+        history.pop()
+        st.error(f"Le coach n'a pas pu répondre : {body.get('detail')}")
+
+
+def page_coach() -> None:
+    st.title("Ton coach")
+    status = get("/coach/statut") or {}
+    st.markdown(f'<div class="lecture"><p>Tu échanges avec une <b>intelligence artificielle</b> : le modèle '
+                f'{esc(status.get("modele", "local"))}, qui tourne sur ta machine. Tes données ne quittent pas ton '
+                "ordinateur. Ses conseils s'appuient sur tes chiffres, mais ne remplacent pas l'avis d'un "
+                "professionnel de santé, et il ne modifie rien à ta place.</p></div>", unsafe_allow_html=True)
+    if not status.get("disponible"):
+        model = esc(status.get("modele", ""))
+        st.markdown(f'<div class="donnees" style="margin-top:1rem"><h4>Coach indisponible</h4><p>'
+                    f'{esc(status.get("erreur") or "Le modèle local ne répond pas.")}<br>Vérifie qu\'Ollama est lancé '
+                    f'et que le modèle est téléchargé : <code>ollama pull {model}</code>.</p></div>',
+                    unsafe_allow_html=True)
+        return
+
+    st.header("Bilan de la semaine")
+    if st.button("Rédiger mon bilan" if "bilan" not in st.session_state else "Rédiger un nouveau bilan"):
+        with st.spinner("Le coach rédige ton bilan…"):
+            ok, body = get_slow("/coach/bilan", regenerer="bilan" in st.session_state)
+        if ok:
+            st.session_state["bilan"] = body
+        else:
+            st.error(f"Bilan impossible : {body.get('detail')}")
+    if "bilan" in st.session_state:
+        bilan = st.session_state["bilan"]
+        st.markdown(bilan["reponse"])
+        used = ", ".join(bilan["outils_utilises"])
+        st.caption("Données consultées : contexte du jour" + (f", {used}" if used else ""))
+
+    st.header("Pose ta question")
+    cols = st.columns(len(SUGGESTIONS))
+    for col, suggestion in zip(cols, SUGGESTIONS):
+        if col.button(suggestion, use_container_width=True):
+            coach_answer(suggestion)
+    question = st.chat_input("Ta question au coach")
+    if question:
+        coach_answer(question)
+    for message in st.session_state.get("coach_messages", []):
+        with st.chat_message("user" if message["role"] == "user" else "assistant"):
+            st.markdown(message["content"])
+            if message.get("outils"):
+                st.caption("Données consultées : contexte du jour, " + ", ".join(message["outils"]))
+
+
 # --- Planning ------------------------------------------------------------------------------------
 
 def page_goals() -> None:
@@ -680,8 +761,9 @@ def page_sessions() -> None:
     st.dataframe(table, hide_index=True, use_container_width=True)
 
 
-PAGES = {"Accueil": page_home, "Objectifs": page_goals, "Planning": page_planning, "Ma forme": page_fitness,
-         "Nuits & journées": page_nights, "Prédictions": page_predictions, "Allures": page_paces, "Séances": page_sessions}
+PAGES = {"Accueil": page_home, "Coach": page_coach, "Objectifs": page_goals, "Planning": page_planning,
+         "Ma forme": page_fitness, "Nuits & journées": page_nights, "Prédictions": page_predictions,
+         "Allures": page_paces, "Séances": page_sessions}
 
 st.markdown('<div class="marque">Foulée</div>', unsafe_allow_html=True)
 choice = st.radio("Navigation", list(PAGES), horizontal=True, label_visibility="collapsed", key="page")

@@ -174,6 +174,20 @@ kubectl -n garmin-run port-forward svc/garmin-dashboard 8501:80
 
 Chaque page est testée automatiquement avec l'outil de test de Streamlit (`tests/test_dashboard.py`).
 
+## Coach IA (modèle local)
+
+Le coach (`processing/coach.py`) est un modèle de langage qui tourne **localement avec Ollama** : les données de santé ne quittent jamais la machine. Il reçoit d'office un contexte compact (forme du jour, verdict, analyses, objectif, prochaines séances) et peut appeler des **outils** reliés à l'API, en lecture seule : prédictions pour une distance et un D+, allures, nutrition, séances, planning, objectifs. Chaque réponse indique les données consultées.
+
+| Point d'accès | Rôle |
+|---|---|
+| `GET /coach/statut` | Ollama est-il joignable, et le modèle téléchargé ? |
+| `POST /coach/question` | Question libre, avec l'historique de la conversation |
+| `GET /coach/bilan` | Bilan de la semaine, mis en cache pour la journée |
+
+Garde-fous inscrits dans ses consignes : s'appuyer uniquement sur les données, ne jamais inventer un chiffre, pas de diagnostic médical (orientation vers un professionnel), aucune modification sans l'accord de l'utilisateur. L'interface indique clairement que l'utilisateur échange avec une IA. Dans les tests et la CI, un faux modèle déterministe (`RUNLAB_LLM=fake`) remplace Ollama.
+
+**Installation** : Ollama tourne sous Windows, à côté de minikube (un modèle de langage ne tiendrait pas dans les 4 Go du cluster). Le cluster le joint par `host.minikube.internal` ; Ollama doit donc écouter sur toutes les interfaces (`OLLAMA_HOST=0.0.0.0:11434`). Modèle par défaut : `qwen2.5:7b`, réglable dans la ConfigMap (`OLLAMA_MODEL`).
+
 ## Tout se met à jour seul
 
 Une fois le cluster démarré (automatiquement à l'ouverture de session Windows, voir `ops/windows/`) :
@@ -353,6 +367,7 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 │   ├── feedback.py              # questionnaire après sortie et exploitation des réponses
 │   ├── nutrition.py             # nutrition et hydratation de course
 │   ├── goals.py                 # objectifs de course
+│   ├── coach.py                 # coach IA : modèle local Ollama, outils, garde-fous
 │   ├── watch.py                 # conversion des séances en entraînements Garmin, envoi sans doublon
 │   └── planning.py              # plan d'entraînement jusqu'à la course
 ├── scripts/
@@ -412,7 +427,7 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 - [x] Tableau de bord Streamlit (forme, prédictions, allures, historique, séances), déployé sur Kubernetes
 - [x] Questionnaire après sortie, planning personnalisé, nutrition et hydratation
 - [x] Objectifs suivis et séance du jour envoyée chaque matin sur la montre
-- [ ] Coach IA hebdomadaire basé sur un LLM
+- [x] Coach IA local (Ollama) : bilan de la semaine et questions libres, avec appels d'outils sur l'API
 - [ ] Monitoring et détection de dérive
 
 ---

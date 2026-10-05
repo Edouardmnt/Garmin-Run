@@ -9,3 +9,6 @@ data:
   GARMIN_DAYS: "200"                   # profondeur du chargement initial, si le volume est vide.
                                        # Ensuite, la synchro repart du dernier jour connu (watermark).
   GARMINTOKENS: /data/.garminconnect   # jetons sur le volume : ils survivent aux Jobs et se rafraîchissent
+  # Coach IA : Ollama tourne sous Windows ; minikube donne accès à la machine hôte par ce nom
+  OLLAMA_URL: http://host.minikube.internal:11434
+  OLLAMA_MODEL: qwen2.5:7b
