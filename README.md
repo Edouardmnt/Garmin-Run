@@ -176,17 +176,25 @@ Chaque page est testée automatiquement avec l'outil de test de Streamlit (`test
 
 ## Coach IA (modèle local)
 
-Le coach (`processing/coach.py`) est un modèle de langage qui tourne **localement avec Ollama** : les données de santé ne quittent jamais la machine. Il reçoit d'office un contexte compact (forme du jour, verdict, analyses, objectif, prochaines séances) et peut appeler des **outils** reliés à l'API, en lecture seule : prédictions pour une distance et un D+, allures, nutrition, séances, planning, objectifs. Chaque réponse indique les données consultées.
+Le coach (`processing/coach.py`) est un modèle de langage qui tourne **localement avec Ollama** : les données de santé ne quittent jamais la machine. Il reçoit un contexte compact (forme du jour, verdict, analyses, objectif, prochaines séances) et les données utiles à la question. Chaque réponse indique les données consultées et la vitesse de génération.
+
+Deux modes (`COACH_MODE`) :
+
+- **`direct`** (par défaut) : l'API repère le sujet de la question par mots-clés (allures, temps, nutrition, séances, planning) et fournit au modèle des données **résumées** : **un seul appel** au modèle, adapté à un modèle local sur processeur ;
+- **`outils`** : le modèle appelle lui-même des outils reliés à l'API (*tool calling*). Plus souple, mais plusieurs appels successifs : réservé à une machine avec carte graphique.
+
+Pour la réactivité : réponse **envoyée mot à mot** (`POST /coach/question/flux`), modèle maintenu en mémoire 30 minutes entre deux questions, réponse limitée en longueur, et modèle léger par défaut (`qwen2.5:3b`).
 
 | Point d'accès | Rôle |
 |---|---|
 | `GET /coach/statut` | Ollama est-il joignable, et le modèle téléchargé ? |
 | `POST /coach/question` | Question libre, avec l'historique de la conversation |
+| `POST /coach/question/flux` | Même chose, réponse envoyée mot à mot (ou bilan de la semaine avec `bilan=true`) |
 | `GET /coach/bilan` | Bilan de la semaine, mis en cache pour la journée |
 
 Garde-fous inscrits dans ses consignes : s'appuyer uniquement sur les données, ne jamais inventer un chiffre, pas de diagnostic médical (orientation vers un professionnel), aucune modification sans l'accord de l'utilisateur. L'interface indique clairement que l'utilisateur échange avec une IA. Dans les tests et la CI, un faux modèle déterministe (`RUNLAB_LLM=fake`) remplace Ollama.
 
-**Installation** : Ollama tourne sous Windows, à côté de minikube (un modèle de langage ne tiendrait pas dans les 4 Go du cluster). Le cluster le joint par `host.minikube.internal` ; Ollama doit donc écouter sur toutes les interfaces (`OLLAMA_HOST=0.0.0.0:11434`). Modèle par défaut : `qwen2.5:7b`, réglable dans la ConfigMap (`OLLAMA_MODEL`).
+**Installation** : Ollama tourne sous Windows, à côté de minikube (un modèle de langage ne tiendrait pas dans les 4 Go du cluster). Le cluster le joint par `host.minikube.internal` ; Ollama doit donc écouter sur toutes les interfaces (`OLLAMA_HOST=0.0.0.0:11434`). Modèle par défaut : `qwen2.5:3b` (rapide sur processeur), réglable dans la ConfigMap (`OLLAMA_MODEL`) ; `qwen2.5:7b` avec une carte graphique.
 
 ## Tout se met à jour seul
 

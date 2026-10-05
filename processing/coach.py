@@ -17,9 +17,14 @@ from collections.abc import Callable
 import requests
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
 TIMEOUT_S = int(os.getenv("OLLAMA_TIMEOUT_S", "300"))  # un modèle local sur CPU peut être lent
 MAX_TOOL_STEPS = 4
+# "direct" (par défaut) : un seul appel au modèle, avec les données choisies d'après la question.
+# "outils" : le modèle choisit lui-même ses outils (plus souple, mais plusieurs appels : réservé aux GPU).
+COACH_MODE = os.getenv("COACH_MODE", "direct")
+OLLAMA_OPTIONS = {"temperature": 0.3, "num_ctx": 4096, "num_predict": 450}
+KEEP_ALIVE = "30m"  # le modèle reste en mémoire entre deux questions
 
 SYSTEM_PROMPT = """Tu es le coach de course à pied de l'application Foulée. Tu tutoies l'utilisateur et tu réponds en français.
 
@@ -73,13 +78,31 @@ class OllamaLLM:
     def __init__(self, url: str = OLLAMA_URL, model: str = OLLAMA_MODEL, timeout: int = TIMEOUT_S):
         self.url, self.model, self.timeout = url.rstrip("/"), model, timeout
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
-        payload = {"model": self.model, "messages": messages, "stream": False, "options": {"temperature": 0.3}}
+    def _payload(self, messages: list[dict], tools: list[dict] | None, stream: bool) -> dict:
+        payload = {"model": self.model, "messages": messages, "stream": stream, "options": OLLAMA_OPTIONS,
+                   "keep_alive": KEEP_ALIVE}
         if tools:
             payload["tools"] = tools
-        response = requests.post(f"{self.url}/api/chat", json=payload, timeout=self.timeout)
+        return payload
+
+    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+        response = requests.post(f"{self.url}/api/chat", json=self._payload(messages, tools, False), timeout=self.timeout)
         response.raise_for_status()
         return response.json()["message"]
+
+    def stream(self, messages: list[dict]):
+        """Réponse mot à mot. Le dernier élément est un dictionnaire de mesures (durée, vitesse)."""
+        with requests.post(f"{self.url}/api/chat", json=self._payload(messages, None, True),
+                           stream=True, timeout=self.timeout) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                chunk = json.loads(line)
+                if chunk.get("message", {}).get("content"):
+                    yield chunk["message"]["content"]
+                if chunk.get("done"):
+                    yield metrics(chunk)
 
     def status(self) -> dict:
         """Ollama joignable ? Modèle téléchargé ?"""
@@ -93,6 +116,14 @@ class OllamaLLM:
                 "erreur": None if present else f"Modèle absent : lance « ollama pull {self.model} »"}
 
 
+def metrics(done_chunk: dict) -> dict:
+    """Mesures renvoyées par Ollama en fin de réponse (durées en nanosecondes)."""
+    total = done_chunk.get("total_duration", 0) / 1e9
+    tokens, gen = done_chunk.get("eval_count", 0), done_chunk.get("eval_duration", 0) / 1e9
+    return {"duree_s": round(total, 1), "jetons": tokens, "jetons_par_s": round(tokens / gen, 1) if gen else None,
+            "contexte_jetons": done_chunk.get("prompt_eval_count")}
+
+
 class FakeLLM:
     """Faux modèle déterministe : consulte les allures, puis répond en citant ce qu'il a lu (tests, CI)."""
 
@@ -104,6 +135,13 @@ class FakeLLM:
             return {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "allures", "arguments": {}}}]}
         seen = ", ".join(m.get("tool_name", "?") for m in tool_results) or "contexte"
         return {"role": "assistant", "content": f"Réponse de test fondée sur : {seen}."}
+
+    def stream(self, messages: list[dict]):
+        data = [m["content"] for m in messages if m["role"] == "system"][0]
+        topics = data.split("DONNÉES UTILES :")[-1][:120] if "DONNÉES UTILES" in data else "contexte"
+        for word in f"Réponse de test fondée sur : {topics.strip()[:60]}.".split(" "):
+            yield word + " "
+        yield {"duree_s": 0.1, "jetons": 8, "jetons_par_s": 80.0, "contexte_jetons": 100}
 
     def status(self) -> dict:
         return {"disponible": True, "modele": self.model, "url": "local", "erreur": None}
@@ -169,3 +207,76 @@ def run_coach(llm, user_message: str, context: dict, tools: dict[str, Callable[.
     # Trop d'appels d'outils : on demande une réponse finale, sans outils
     final = llm.chat(messages + [{"role": "user", "content": "Réponds maintenant avec ce que tu as."}], None)
     return {"reponse": final.get("content", "").strip(), "outils_utilises": used, "modele": getattr(llm, "model", "?")}
+
+
+# --- Mode direct : un seul appel, avec les données choisies d'après la question -------------------
+
+TOPIC_KEYWORDS = {
+    "allures": ("allure", "footing", "endurance", " ef", "fraction", "tempo", "seuil", "vma", "rythme", "vite", "lent"),
+    "predictions": ("temps", "chrono", "predi", "objectif", "semi", "marathon", "10 km", "5 km", "10k", "5k", "record"),
+    "nutrition": ("mang", "boire", "bois", "gel", "nutrition", "hydrat", "ravito", "repas", "sucre", "eau", "glucide"),
+    "seances": ("hier", "dernier", "derniere", "sortie", "fait", "realise"),
+    "planning": ("semaine", "planning", "programme", "demain", "prochain", "seance", "ce soir", "aujourd"),
+}
+
+
+def _normalize(text: str) -> str:
+    table = str.maketrans("àâäéèêëîïôöùûüç", "aaaeeeeiioouuuc")
+    return " " + text.lower().translate(table)
+
+
+def detect_topics(question: str) -> list[str]:
+    """Sujets de la question, repérés par mots-clés : au plus trois, pour garder un contexte court."""
+    text = _normalize(question)
+    return [topic for topic, words in TOPIC_KEYWORDS.items() if any(w in text for w in words)][:3]
+
+
+def detect_distance(question: str) -> dict:
+    """Distance évoquée dans la question, pour les prédictions et la nutrition."""
+    import re
+
+    text = _normalize(question)
+    if "semi" in text:
+        return {"distance": "semi"}
+    if "marathon" in text:
+        return {"distance": "marathon"}
+    match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:km|k\b)", text)
+    if match:
+        km = float(match.group(1).replace(",", "."))
+        presets = {5.0: "5k", 10.0: "10k"}
+        return {"distance": presets[km]} if km in presets else {"distance_km": km}
+    return {}
+
+
+def run_coach_direct_stream(llm, user_message: str, context: dict, fetchers: dict, history: list[dict] | None = None):
+    """Génère la réponse mot à mot, en un seul appel au modèle. Premier élément : la liste des sujets consultés."""
+    topics = detect_topics(user_message)
+    extra = {}
+    for topic in topics:
+        try:
+            extra[topic] = fetchers[topic](user_message)
+        except Exception as exc:  # une donnée indisponible ne doit pas empêcher de répondre
+            extra[topic] = {"erreur": str(exc)}
+    data = json.dumps(context, ensure_ascii=False)
+    if extra:
+        data += "\n\nDONNÉES UTILES : " + json.dumps(extra, ensure_ascii=False, default=str)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT.format(context=data)}]
+    messages += [m for m in (history or []) if m.get("role") in ("user", "assistant")][-4:]
+    messages.append({"role": "user", "content": user_message})
+    yield topics
+    yield from llm.stream(messages)
+
+
+def answer_direct(llm, user_message: str, context: dict, fetchers: dict, history: list[dict] | None = None) -> dict:
+    """Version complète (non streamée) du mode direct, pour l'API classique et le bilan."""
+    stream = run_coach_direct_stream(llm, user_message, context, fetchers, history)
+    topics = next(stream)
+    parts, stats = [], None
+    for item in stream:
+        if isinstance(item, dict):
+            stats = item
+        else:
+            parts.append(item)
+    return {"reponse": "".join(parts).strip(), "outils_utilises": topics, "modele": getattr(llm, "model", "?"),
+            "mesures": stats}
+

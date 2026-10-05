@@ -134,3 +134,110 @@ def test_modele_injoignable(coach_client, monkeypatch):
     response = client.post("/coach/question", json={"question": "?"})
     assert response.status_code == 503 and "Ollama" in response.json()["detail"]
     assert client.get("/coach/statut").json()["disponible"] is False
+
+
+# --- Mode direct et réponse mot à mot -------------------------------------------------------------
+
+@pytest.mark.parametrize("question,topics", [
+    ("Quelle allure pour mon prochain footing ?", ["allures", "planning"]),
+    ("Que manger avant le semi ?", ["predictions", "nutrition"]),
+    ("Comment s'est passée ma sortie d'hier ?", ["seances"]),
+    ("Bonjour", []),
+])
+def test_sujets_reperes(question, topics):
+    from processing.coach import detect_topics
+
+    assert detect_topics(question) == topics
+
+
+@pytest.mark.parametrize("question,expected", [
+    ("Mon temps sur semi ?", {"distance": "semi"}), ("Et sur 10 km ?", {"distance": "10k"}),
+    ("Pour un 15 km ?", {"distance_km": 15.0}), ("Et demain ?", {}),
+])
+def test_distance_reperee(question, expected):
+    from processing.coach import detect_distance
+
+    assert detect_distance(question) == expected
+
+
+def test_un_seul_appel_au_modele_en_mode_direct():
+    from processing.coach import answer_direct
+
+    calls = []
+
+    class OneShot:
+        model = "un-appel"
+
+        def stream(self, messages):
+            calls.append(messages)
+            yield "Vise 6'00. "
+            yield {"duree_s": 12.0, "jetons": 40, "jetons_par_s": 5.0, "contexte_jetons": 900}
+
+    result = answer_direct(OneShot(), "Quelle allure en footing ?", {"verdict": "ok"},
+                           {"allures": lambda q: {"ef": "5'50 à 6'20"}, "planning": lambda q: {"prochaines": []}})
+    assert len(calls) == 1  # un seul passage dans le modèle
+    assert "5'50 à 6'20" in calls[0][0]["content"]  # les données utiles sont dans le contexte
+    assert result["reponse"] == "Vise 6'00." and result["mesures"]["jetons_par_s"] == 5.0
+
+
+def test_lecture_du_flux_ollama(monkeypatch):
+    import json
+
+    lines = [json.dumps({"message": {"content": "Bon"}}).encode(), b"",
+             json.dumps({"message": {"content": "jour"}}).encode(),
+             json.dumps({"done": True, "total_duration": 3e9, "eval_count": 10, "eval_duration": 2e9,
+                         "prompt_eval_count": 500}).encode()]
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_lines(self):
+            return iter(lines)
+
+    sent = {}
+
+    def fake_post(url, json, stream, timeout):
+        sent.update(json)
+        return Response()
+
+    monkeypatch.setattr("processing.coach.requests.post", fake_post)
+    out = list(OllamaLLM("http://x:11434", "m").stream([{"role": "user", "content": "?"}]))
+    assert out[:2] == ["Bon", "jour"] and out[2] == {"duree_s": 3.0, "jetons": 10, "jetons_par_s": 5.0,
+                                                    "contexte_jetons": 500}
+    assert sent["stream"] is True and sent["keep_alive"] == "30m" and sent["options"]["num_predict"] > 0
+
+
+def test_point_d_acces_en_flux(coach_client):
+    client, _ = coach_client
+    with client.stream("POST", "/coach/question/flux", json={"question": "Quelle allure en footing ?"}) as r:
+        assert r.headers["X-Coach-Sujets"] == "allures"
+        body = "".join(r.iter_text())
+    assert "Réponse de test" in body and "\n[[MESURES]] " in body
+    with client.stream("POST", "/coach/question/flux", json={"bilan": True}) as r:
+        assert "Réponse de test" in "".join(r.iter_text())
+
+
+def test_le_marqueur_technique_n_apparait_jamais_a_l_ecran():
+    """visible_text (interface) : le texte passe, la ligne de mesures est retirée, même coupée en deux."""
+    import ast
+    from pathlib import Path
+
+    source = Path("dashboard/app.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "visible_text")
+    namespace = {"json": __import__("json")}
+    exec(compile(ast.Module([func], []), "visible_text", "exec"), namespace)
+    meta = {}
+    chunks = ["Vise ", "6'00 au km", "\n[", '[MESURES]] {"duree_s": 4.0, "jetons_par_s": 6.5}']
+    shown = "".join(namespace["visible_text"](iter(chunks), meta))
+    assert shown == "Vise 6'00 au km" and meta["mesures"]["jetons_par_s"] == 6.5
+    meta = {}
+    list(namespace["visible_text"](iter(["Début", "\n[[ERREUR]] Ollama injoignable"]), meta))
+    assert meta["erreur"] == "Ollama injoignable"

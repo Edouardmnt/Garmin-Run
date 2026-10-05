@@ -16,8 +16,18 @@ from typing import Literal
 import pandas as pd
 import requests
 from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
-from processing.coach import BILAN_PROMPT, compact_context, get_llm, run_coach
+from processing.coach import (
+    BILAN_PROMPT,
+    COACH_MODE,
+    answer_direct,
+    compact_context,
+    detect_distance,
+    get_llm,
+    run_coach,
+    run_coach_direct_stream,
+)
 from processing.feedback import (
     apply_feedback_labels,
     efforts_by_activity,
@@ -609,13 +619,69 @@ def coach_context() -> dict:
     return compact_context(forme(), analyse(), planning_actif(), objectifs()["objectifs"])
 
 
+def _race(question: str) -> dict:
+    """Distance évoquée dans la question, sinon celle de l'objectif actif, sinon 10 km."""
+    found = detect_distance(question)
+    if found:
+        return found
+    gold = read_parquet("gold/daily_features.parquet")
+    goal = active_goal(DATA_DIR, reference_day(gold))
+    if goal and goal.get("distance") in DISTANCES_M:
+        return {"distance": goal["distance"]}
+    return {"distance_km": goal_km(goal)} if goal else {"distance": "10k"}
+
+
+def coach_fetchers() -> dict:
+    """Données RÉSUMÉES par sujet, pour le mode direct : un petit modèle local lit vite un contexte court."""
+    def allures_(_q):
+        data = allures(fenetre_jours=120)
+        zones = {k: {"allure": f"{z['recommandation']['allure_rapide']} à {z['recommandation']['allure_lente']}",
+                     "fc_cible": z["recommandation"]["fc_cible"], "source": z["recommandation"]["source"]}
+                 for k, z in data["zones"].items()}
+        return {"zones": zones, "allure_max": data.get("allure_max")}
+
+    def predictions_(q):
+        race = _race(q)
+        p = predictions(distance=race.get("distance", "10k"), ajuster_au_jour=True, denivele_m=0,
+                        distance_km=race.get("distance_km"))
+        key, pred = next(iter(p["predictions"].items()))
+        return {"distance": key if key != "personnalisee" else f"{race['distance_km']} km",
+                **{k: pred[k] for k in ("temps_ajuste", "temps_plat", "allure_course", "prediction_montre")},
+                "vdot": p["vdot"], "avertissements": p["avertissements"][:2]}
+
+    def nutrition_(q):
+        race = _race(q)
+        n = nutrition(distance=race.get("distance", "semi"), temperature_c=15, denivele_m=0,
+                      distance_km=race.get("distance_km"))
+        return {k: n[k] for k in ("temps_prevu", "glucides_g_par_heure", "boisson_ml_par_heure", "sodium")} | {
+            "avant": n["avant"][:3], "pendant": n["pendant"][:3], "reperes": n["reperes"][:6]}
+
+    def seances_(_q):
+        return {"dernieres": [{k: x[k] for k in ("date", "distance_km", "allure", "fc_moyenne", "type")}
+                              for x in seances(limite=5)["seances"]]}
+
+    def planning_(_q):
+        plan = planning_actif()
+        upcoming = [x for w in plan["semaines"] for x in w["seances"] if not x.get("passee")][:7]
+        return {"prochaines": [{k: x.get(k) for k in ("date", "jour", "titre", "distance_km", "allure", "fc_cible")}
+                               for x in upcoming]}
+
+    return {"allures": allures_, "predictions": predictions_, "nutrition": nutrition_, "seances": seances_,
+            "planning": planning_}
+
+
+def model_unavailable(llm, exc: Exception) -> HTTPException:
+    return HTTPException(503, f"Le modèle local ne répond pas ({llm.model}) : {exc}. Ollama est-il lancé et joignable ?")
+
+
 def ask_coach(message: str, history: list[dict] | None = None) -> dict:
     llm = get_llm()
     try:
-        return run_coach(llm, message, coach_context(), coach_tools(), history)
+        if COACH_MODE == "outils":
+            return run_coach(llm, message, coach_context(), coach_tools(), history)
+        return answer_direct(llm, message, coach_context(), coach_fetchers(), history)
     except requests.RequestException as exc:
-        raise HTTPException(503, f"Le modèle local ne répond pas ({llm.model}) : {exc}. "
-                                 "Ollama est-il lancé et joignable ?") from exc
+        raise model_unavailable(llm, exc) from exc
 
 
 @app.get("/coach/statut", tags=["coach"])
@@ -630,6 +696,32 @@ def question_coach(question: str = Body(..., embed=True), historique: list[dict]
     if not question.strip():
         raise HTTPException(422, "Pose une question au coach.")
     return ask_coach(question.strip(), historique)
+
+
+@app.post("/coach/question/flux", tags=["coach"])
+def question_coach_flux(question: str = Body("", embed=True), historique: list[dict] = Body([], embed=True),
+                        bilan: bool = Body(False, embed=True)):
+    """Réponse du coach envoyée mot à mot. En-tête X-Coach-Sujets : données consultées.
+
+    La réponse se termine par une ligne « [[MESURES]] {json} » (durée, vitesse), ou « [[ERREUR]] message ».
+    Avec bilan=true, le coach rédige le bilan de la semaine.
+    """
+    question = BILAN_PROMPT if bilan else question
+    if not question.strip():
+        raise HTTPException(422, "Pose une question au coach.")
+    llm = get_llm()
+    generator = run_coach_direct_stream(llm, question.strip(), coach_context(), coach_fetchers(), historique)
+    topics = next(generator)
+
+    def body():
+        try:
+            for item in generator:
+                yield ("\n[[MESURES]] " + json.dumps(item)) if isinstance(item, dict) else item
+        except requests.RequestException as exc:
+            yield f"\n[[ERREUR]] Le modèle local ne répond pas ({llm.model}) : {exc}"
+
+    return StreamingResponse(body(), media_type="text/plain; charset=utf-8",
+                             headers={"X-Coach-Sujets": ",".join(topics)})
 
 
 @app.get("/coach/bilan", tags=["coach"])

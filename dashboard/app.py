@@ -5,6 +5,7 @@ Sans API séparée :  $env:RUNLAB_API_URL = "inprocess"; streamlit run dashboard
 """
 
 import html
+import json
 import os
 from datetime import date, timedelta
 from pathlib import Path
@@ -434,18 +435,68 @@ SUGGESTIONS = ["Je peux faire mon fractionné ce soir ?", "Quelle allure pour mo
                "Que manger avant ma prochaine course ?"]
 
 
-def coach_answer(question: str) -> None:
-    history = st.session_state.setdefault("coach_messages", [])
-    history.append({"role": "user", "content": question})
-    with st.spinner("Le coach consulte tes données…"):
-        ok, body = post("/coach/question", {"question": question,
-                                            "historique": [{"role": m["role"], "content": m["content"]}
-                                                           for m in history[:-1]]}, timeout=COACH_TIMEOUT_S)
-    if ok:
-        history.append({"role": "assistant", "content": body["reponse"], "outils": body["outils_utilises"]})
+def stream_post(path: str, payload: dict, meta: dict):
+    """Lit une réponse envoyée mot à mot par l'API. Les en-têtes et la fin technique vont dans `meta`."""
+    if API_URL == "inprocess":
+        with inprocess_client().stream("POST", path, json=payload) as response:
+            meta["sujets"] = response.headers.get("X-Coach-Sujets", "")
+            yield from response.iter_text()
     else:
-        history.pop()
-        st.error(f"Le coach n'a pas pu répondre : {body.get('detail')}")
+        with requests.post(f"{API_URL}{path}", json=payload, stream=True, timeout=COACH_TIMEOUT_S) as response:
+            response.encoding = "utf-8"
+            meta["sujets"] = response.headers.get("X-Coach-Sujets", "")
+            yield from response.iter_content(chunk_size=None, decode_unicode=True)
+
+
+def visible_text(chunks, meta: dict):
+    """Ne laisse passer à l'écran que le texte de la réponse : la ligne technique finale va dans `meta`."""
+    buffer, tail = "", None
+    for chunk in chunks:
+        if tail is not None:
+            tail += chunk
+            continue
+        buffer += chunk
+        cut = buffer.find("\n[[")
+        if cut >= 0:
+            if buffer[:cut]:
+                yield buffer[:cut]
+            tail, buffer = buffer[cut:], ""
+        elif len(buffer) > 3:  # garde 3 caractères au cas où le marqueur arrive en deux morceaux
+            yield buffer[:-3]
+            buffer = buffer[-3:]
+    if buffer:
+        yield buffer
+    for line in (tail or "").splitlines():
+        if line.startswith("[[MESURES]]"):
+            meta["mesures"] = json.loads(line.removeprefix("[[MESURES]]").strip())
+        elif line.startswith("[[ERREUR]]"):
+            meta["erreur"] = line.removeprefix("[[ERREUR]]").strip()
+
+
+def footnote(meta: dict) -> str:
+    topics = [t for t in meta.get("sujets", "").split(",") if t]
+    text = "Données consultées : contexte du jour" + (", " + ", ".join(topics) if topics else "")
+    m = meta.get("mesures") or {}
+    if m.get("duree_s") is not None:
+        speed = f", {m['jetons_par_s']} jetons/s".replace(".", ",") if m.get("jetons_par_s") else ""
+        text += f". Réponse en {m['duree_s']:.0f} s{speed}."
+    return text
+
+
+def stream_answer(payload: dict) -> dict:
+    """Affiche la réponse au fil de sa rédaction, puis ses sources et sa vitesse."""
+    meta = {}
+    try:
+        text = st.write_stream(visible_text(stream_post("/coach/question/flux", payload, meta), meta))
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        meta["erreur"] = str(exc)
+        text = ""
+    if meta.get("erreur"):
+        st.error(f"Le coach n'a pas pu répondre : {meta['erreur']}")
+    else:
+        st.caption(footnote(meta))
+    return {"content": text if isinstance(text, str) else "".join(text), "note": footnote(meta),
+            "erreur": meta.get("erreur")}
 
 
 def page_coach() -> None:
@@ -465,31 +516,37 @@ def page_coach() -> None:
 
     st.header("Bilan de la semaine")
     if st.button("Rédiger mon bilan" if "bilan" not in st.session_state else "Rédiger un nouveau bilan"):
-        with st.spinner("Le coach rédige ton bilan…"):
-            ok, body = get_slow("/coach/bilan", regenerer="bilan" in st.session_state)
-        if ok:
-            st.session_state["bilan"] = body
-        else:
-            st.error(f"Bilan impossible : {body.get('detail')}")
-    if "bilan" in st.session_state:
-        bilan = st.session_state["bilan"]
-        st.markdown(bilan["reponse"])
-        used = ", ".join(bilan["outils_utilises"])
-        st.caption("Données consultées : contexte du jour" + (f", {used}" if used else ""))
+        st.session_state.pop("bilan", None)
+        answer = stream_answer({"bilan": True})
+        if not answer["erreur"]:
+            st.session_state["bilan"] = answer
+    elif "bilan" in st.session_state:
+        st.markdown(st.session_state["bilan"]["content"])
+        st.caption(st.session_state["bilan"]["note"])
 
     st.header("Pose ta question")
     cols = st.columns(len(SUGGESTIONS))
+    question = None
     for col, suggestion in zip(cols, SUGGESTIONS):
         if col.button(suggestion, use_container_width=True):
-            coach_answer(suggestion)
-    question = st.chat_input("Ta question au coach")
-    if question:
-        coach_answer(question)
-    for message in st.session_state.get("coach_messages", []):
-        with st.chat_message("user" if message["role"] == "user" else "assistant"):
+            question = suggestion
+    question = st.chat_input("Ta question au coach") or question
+
+    history = st.session_state.setdefault("coach_messages", [])
+    for message in history:
+        with st.chat_message(message["role"]):
             st.markdown(message["content"])
-            if message.get("outils"):
-                st.caption("Données consultées : contexte du jour, " + ", ".join(message["outils"]))
+            if message.get("note"):
+                st.caption(message["note"])
+    if question:
+        with st.chat_message("user"):
+            st.markdown(question)
+        with st.chat_message("assistant"):
+            answer = stream_answer({"question": question,
+                                    "historique": [{"role": m["role"], "content": m["content"]} for m in history]})
+        if not answer["erreur"]:
+            history += [{"role": "user", "content": question},
+                        {"role": "assistant", "content": answer["content"], "note": answer["note"]}]
 
 
 # --- Planning ------------------------------------------------------------------------------------
