@@ -477,7 +477,8 @@ def page_goals() -> None:
         for g in goals:
             race_day = date.fromisoformat(g["date_course"]).strftime("%d/%m/%Y")
             cols = st.columns([4, 2, 2, 2, 1, 1], vertical_alignment="center")
-            cols[0].markdown(f"**{esc(g['nom'])}**  \n<span style='color:{GRIS}'>{esc(g['libelle'])}, {race_day}"
+            label = g.get("libelle", g.get("distance") or "")
+            cols[0].markdown(f"**{esc(g['nom'])}**  \n<span style='color:{GRIS}'>{esc(label)}, {race_day}"
                              f"{'  (actif)' if g['actif'] else ''}</span>", unsafe_allow_html=True)
             cols[1].markdown(f"Prédit  \n**{g['temps_predit']}**")
             cols[2].markdown(f"Visé  \n**{g['temps_vise'] or '—'}**")

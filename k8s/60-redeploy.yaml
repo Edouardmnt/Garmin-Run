@@ -1,0 +1,67 @@
+# Chaque matin à 5 h 30 : l'API et le tableau de bord redémarrent et récupèrent la dernière image (CI)
+# Droits minimaux (RBAC) : lire et modifier ces deux Deployments, rien d'autre.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: redeploy
+  namespace: garmin-run
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: redeploy
+  namespace: garmin-run
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["garmin-api", "garmin-dashboard"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: redeploy
+  namespace: garmin-run
+subjects:
+  - kind: ServiceAccount
+    name: redeploy
+    namespace: garmin-run
+roleRef:
+  kind: Role
+  name: redeploy
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: redeploy
+  namespace: garmin-run
+spec:
+  schedule: "30 5 * * *"
+  timeZone: "Europe/Paris"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 604800
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: redeploy
+          restartPolicy: Never
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+          containers:
+            - name: redeploy
+              image: ghcr.io/edouardmnt/garmin-run:latest
+              imagePullPolicy: Always
+              command: ["python", "scripts/redeploy.py"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+                limits:
+                  memory: 128Mi

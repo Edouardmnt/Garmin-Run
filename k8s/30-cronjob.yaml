@@ -1,11 +1,12 @@
-# Chaque matin à 6 h (Paris) : synchronisation Garmin, transformations, puis séance du jour envoyée à la montre
+# Toutes les 3 heures de 6 h à 21 h (Paris) : synchronisation Garmin, transformations, séance du jour sur la montre.
+# L'envoi à la montre est sans doublon : seule une séance nouvelle ou modifiée est envoyée.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: garmin-sync
   namespace: garmin-run
 spec:
-  schedule: "0 6 * * *"
+  schedule: "0 6-21/3 * * *"
   timeZone: "Europe/Paris"
   concurrencyPolicy: Forbid          # jamais deux synchronisations en même temps
   startingDeadlineSeconds: 604800    # PC éteint jusqu'à 7 jours : une synchro se lance dès le redémarrage

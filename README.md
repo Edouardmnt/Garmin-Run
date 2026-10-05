@@ -103,7 +103,7 @@ Le dossier `k8s/` déploie la synchronisation quotidienne sur un cluster (testé
 | `PersistentVolumeClaim` `garmin-data` | Volume persistant pour `/data` (bronze, silver, gold, jetons) |
 | `ConfigMap` `garmin-config` | Configuration non sensible (profondeur du chargement initial, chemins) |
 | `Secret` `garmin-credentials` | Identifiants de secours, optionnel, jamais versionné |
-| `CronJob` `garmin-sync` | Pipeline `matin` chaque jour à 6 h (Europe/Paris) : synchronisation, transformations, séance du jour envoyée sur la montre ; sans chevauchement, une seule nouvelle tentative, rattrapage jusqu'à 7 jours |
+| `CronJob` `garmin-sync` | Pipeline `matin` toutes les 3 heures de 6 h à 21 h (Europe/Paris) : synchronisation, transformations, séance du jour envoyée sur la montre ; sans chevauchement, une seule nouvelle tentative, rattrapage jusqu'à 7 jours |
 
 ```bash
 kubectl apply -f k8s/
@@ -173,6 +173,18 @@ kubectl -n garmin-run port-forward svc/garmin-dashboard 8501:80
 ```
 
 Chaque page est testée automatiquement avec l'outil de test de Streamlit (`tests/test_dashboard.py`).
+
+## Tout se met à jour seul
+
+Une fois le cluster démarré (automatiquement à l'ouverture de session Windows, voir `ops/windows/`) :
+
+| Quoi | Comment |
+|---|---|
+| Données (séances, nuits, stress) | CronJob `garmin-sync` toutes les 3 heures de 6 h à 21 h : synchronisation, couches silver et gold, séance du jour sur la montre (sans doublon) |
+| Code | Chaque push publie une image (CI) ; le CronJob `redeploy` redémarre l'API et le tableau de bord chaque matin à 5 h 30 pour qu'ils l'utilisent. Il appelle directement l'API de Kubernetes avec un compte de service aux droits limités (RBAC) à ces deux Deployments |
+| Accès | `ops/windows/port-forward.ps1` garde http://localhost:8501 ouvert en arrière-plan et le rouvre après chaque redémarrage |
+
+Le cluster est le seul à se connecter à Garmin : un seul jeu de jetons, pas de conflit. Objectifs et questionnaires sont enregistrés par l'API sur le volume du cluster.
 
 ## Avec ses propres données Garmin
 
@@ -362,7 +374,7 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 │   ├── app.py                   # tableau de bord Streamlit, client de l'API
 │   ├── style.css                # direction artistique : sportif, chic, épuré
 │   └── static/                  # police Archivo intégrée (licence OFL)
-├── k8s/                         # manifestes Kubernetes (namespace, volume, config, CronJob, API)
+├── k8s/                         # manifestes Kubernetes (volume, config, CronJobs, API, tableau de bord, RBAC)
 │   └── tools/data-loader.yaml   # pod utilitaire pour accéder au volume
 ├── tests/                       # tests unitaires et de bout en bout (pytest)
 ├── .github/workflows/ci.yml     # intégration continue
