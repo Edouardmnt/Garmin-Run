@@ -137,3 +137,31 @@ def test_les_reponses_modifient_les_temps_predits(data_dir, tmp_path, monkeypatc
     assert any("questionnaires" in w for w in after["avertissements"])
     monkeypatch.setenv("RUNLAB_DATA_DIR", str(data_dir))
     importlib.reload(api.main)
+
+
+def test_reponse_sans_sortie_ne_cree_pas_de_ligne_vide(data_dir, tmp_path, monkeypatch):
+    """Réponse enregistrée pour une sortie absente des données : la page Séances ne doit pas afficher de ligne vide."""
+    import importlib
+    import json
+    import shutil
+    import subprocess
+    import sys
+
+    from fastapi.testclient import TestClient
+
+    import api.main
+
+    data = tmp_path / "data"
+    shutil.copytree(data_dir, data)
+    env = {**__import__("os").environ, "RUNLAB_DATA_DIR": str(data)}
+    subprocess.run([sys.executable, "scripts/make_run_labels.py"], env=env, check=True, capture_output=True)
+    (data / "feedback").mkdir(exist_ok=True)
+    ghost = {"activity_id": 123456789, "date_sortie": "2026-10-04", "rpe": 2, "label": "ef", "douleur": 0,
+             "reponses": {"type": "Endurance fondamentale"}}
+    (data / "feedback" / "feedback.jsonl").write_text(json.dumps(ghost), encoding="utf-8")
+    monkeypatch.setenv("RUNLAB_DATA_DIR", str(data))
+    importlib.reload(api.main)
+    sessions = TestClient(api.main.app).get("/seances", params={"limite": 100}).json()["seances"]
+    assert sessions and all(s["date"] for s in sessions)
+    monkeypatch.setenv("RUNLAB_DATA_DIR", str(data_dir))
+    importlib.reload(api.main)

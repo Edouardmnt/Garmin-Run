@@ -557,7 +557,9 @@ def seances(limite: int = Query(10, ge=1, le=100)) -> dict:
     labels = read_labels()
     if labels is None:
         raise HTTPException(404, "Aucun fichier d'étiquetage : lance scripts/make_run_labels.py.")
-    labels = labels.sort_values("date", ascending=False).head(limite)
+    # Seules les sorties présentes dans les données s'affichent : une réponse au questionnaire sans la sortie
+    # correspondante (données pas encore synchronisées) ne doit pas produire de ligne vide
+    labels = labels[labels["date"].notna()].sort_values("date", ascending=False).head(limite)
     out = []
     for _, r in labels.iterrows():
         labelled = isinstance(r["label"], str) and r["label"].strip() != ""
