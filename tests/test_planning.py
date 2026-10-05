@@ -88,3 +88,39 @@ def test_planning_et_analyse_par_l_api(data_dir, monkeypatch):
     assert body["semaines"][-1]["phase"] == "Semaine de course"
     assert client.get("/planning", params={"jours_tennis": "lundi"}).status_code == 422
     assert client.get("/analyse").json()["verdict"]["niveau"] in {"vert", "ambre", "rouge"}
+
+
+def test_les_seances_passees_de_la_semaine_restent_visibles():
+    p = plan(today=date(2026, 10, 8), tennis_days=[], sessions_per_week=5)  # un jeudi
+    first_week = p["semaines"][0]["seances"]
+    past = [s for s in first_week if s["passee"]]
+    assert past and all(s["date"] < "2026-10-08" for s in past)
+    assert all(not s["passee"] for w in p["semaines"][1:] for s in w["seances"])
+
+
+def test_statut_realisee_par_l_api(data_dir, monkeypatch):
+    import importlib
+
+    from fastapi.testclient import TestClient
+
+    import api.main
+
+    monkeypatch.setenv("RUNLAB_DATA_DIR", str(data_dir))
+    importlib.reload(api.main)
+    acts = pd.read_parquet(data_dir / "silver" / "activities.parquet")
+    run_days = set(pd.to_datetime(acts.loc[acts["sport"] == "running", "start_time"]).dt.date.astype(str))
+    sessions = [s for w in TestClient(api.main.app).get("/planning/actif").json()["semaines"] for s in w["seances"]]
+    for s in sessions:
+        assert s["realisee"] == (s["date"] in run_days if s["passee"] else None)
+
+
+def test_le_pipeline_met_a_jour_l_etiquetage(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "RUNLAB_DATA_DIR": str(tmp_path)}
+    subprocess.run([sys.executable, "scripts/run_pipeline.py", "demo"], env=env, check=True, capture_output=True)
+    labels = pd.read_csv(tmp_path / "labels" / "run_labels.csv", sep=";", decimal=",")
+    acts = pd.read_parquet(tmp_path / "silver" / "activities.parquet")
+    assert len(labels) == (acts["sport"] == "running").sum()  # chaque sortie synchronisée y figure

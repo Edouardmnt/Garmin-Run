@@ -180,8 +180,6 @@ def build_plan(today: date, distance: str, race_date: date | None, sessions_per_
             race_day = race_date
             sharpen = race_day - timedelta(days=2)
             for d in sorted({sharpen, race_day} | ({race_day - timedelta(days=4)} if sessions_per_week >= 3 else set())):
-                if d < today:
-                    continue
                 if d == race_day:
                     advice = (f"Vise une allure régulière de {fmt_pace(race_pace_s)}, "
                               "en partant légèrement plus lentement sur le premier kilomètre.")
@@ -220,8 +218,6 @@ def build_plan(today: date, distance: str, race_date: date | None, sessions_per_
 
         for offset, kind in sorted(layout.items()):
             day = monday + timedelta(days=offset)
-            if day < today:
-                continue
             if kind == "longue":
                 sessions.append(session(day, "longue", "Sortie longue", f"{long_km:.0f} km en endurance fondamentale, "
                                         "allure régulière et confortable.", long_km, ef.get("lente_s", ef_mid),
@@ -275,6 +271,11 @@ def build_plan(today: date, distance: str, race_date: date | None, sessions_per_
                                               step("retour_au_calme", duree_s=COOLDOWN_S, allure=ef)]
         weeks.append({"numero": w + 1, "debut": monday.isoformat(), "phase": phase,
                       "volume_km": round(sum(x["distance_km"] for x in sessions), 1), "seances": sessions})
+
+    # Les séances déjà passées de la semaine en cours restent visibles, marquées comme passées
+    for week in weeks:
+        for s in week["seances"]:
+            s["passee"] = s["date"] < today.isoformat()
 
     # Séance du jour adaptée à la forme
     for week in weeks:

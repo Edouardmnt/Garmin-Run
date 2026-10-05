@@ -180,7 +180,7 @@ Une fois le cluster démarré (automatiquement à l'ouverture de session Windows
 
 | Quoi | Comment |
 |---|---|
-| Données (séances, nuits, stress) | CronJob `garmin-sync` toutes les 3 heures de 6 h à 21 h : synchronisation, couches silver et gold, séance du jour sur la montre (sans doublon) |
+| Données (séances, nuits, stress) | CronJob `garmin-sync` toutes les 3 heures de 6 h à 21 h : synchronisation, couches silver et gold, ajout des nouvelles sorties au fichier d'étiquetage (sans écraser les étiquettes), séance du jour sur la montre (sans doublon) |
 | Code | Chaque push publie une image (CI) ; le CronJob `redeploy` redémarre l'API et le tableau de bord chaque matin à 5 h 30 pour qu'ils l'utilisent. Il appelle directement l'API de Kubernetes avec un compte de service aux droits limités (RBAC) à ces deux Deployments |
 | Accès | `ops/windows/port-forward.ps1` garde http://localhost:8501 ouvert en arrière-plan et le rouvre après chaque redémarrage |
 
@@ -210,7 +210,7 @@ L'export utilise la bibliothèque non officielle [python-garminconnect](https://
 |---|---|
 | `GET/POST /objectifs`, `POST /objectifs/{id}/activer`, `DELETE /objectifs/{id}` | Gestion des objectifs |
 | `GET /objectifs/{id}/suivi` | Évolution du temps prédit face au temps visé |
-| `GET /planning/actif` | Planning de l'objectif actif |
+| `GET /planning/actif` | Planning de l'objectif actif ; les séances passées de la semaine restent visibles, marquées réalisées ou non |
 | `GET /montre/seance-du-jour`, `POST /montre/envoyer` | Séance du jour au format Garmin, et envoi au calendrier |
 
 ## Questionnaire après chaque sortie

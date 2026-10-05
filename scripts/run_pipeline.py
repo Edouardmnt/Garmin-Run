@@ -14,7 +14,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TRANSFORM = [["processing/build_silver.py"], ["processing/build_gold.py"]]
+# make_run_labels ajoute les nouvelles sorties au fichier d'étiquetage, sans écraser les étiquettes existantes
+TRANSFORM = [["processing/build_silver.py"], ["processing/build_gold.py"], ["scripts/make_run_labels.py"]]
 MODES = {
     "demo": [["scripts/generate_sample_data.py"], *TRANSFORM],
     "sync": [["ingestion/garmin_export.py"], *TRANSFORM],

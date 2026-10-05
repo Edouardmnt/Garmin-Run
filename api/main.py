@@ -347,6 +347,10 @@ def planning(
     plan = build_plan(today, family, date_course, seances_par_semaine, tennis, jour_sortie_longue,
                       base_km, paces, race_time / (meters / 1000), verdict["niveau"], factor, ef_shift,
                       race_km=meters / 1000, race_label=label)
+    run_days = set(pd.to_datetime(activities.loc[activities["sport"] == "running", "start_time"]).dt.date.astype(str))
+    for week in plan["semaines"]:
+        for s in week["seances"]:
+            s["realisee"] = s["date"] in run_days if s["passee"] else None
     return {
         "objectif": {"distance": key, "distance_km": round(meters / 1000, 3), "libelle": label,
                      "date_course": None if date_course is None else date_course.isoformat(),

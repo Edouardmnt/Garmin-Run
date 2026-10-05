@@ -125,7 +125,11 @@ def sessions_table(sessions: list[dict]) -> None:
         detail = s["allure"] if s.get("allure") and s["allure"] != "—" else ""
         if s.get("fc_cible"):
             detail += f"<br>FC {esc(s['fc_cible'])}"
-        rows.append(f"""<tr><td class="jour"><b>{esc(s['jour'])}</b><span>{when}</span></td>
+        if s.get("passee"):
+            done = s.get("realisee")
+            detail = ("Réalisée" if done else "Non réalisée" if done is False else "Passée") + (f"<br>{detail}" if detail else "")
+        row_class = ' class="passee"' if s.get("passee") else ""
+        rows.append(f"""<tr{row_class}><td class="jour"><b>{esc(s['jour'])}</b><span>{when}</span></td>
             <td class="type"><i style="background:{color}"></i>{esc(TYPE_NAMES.get(s['type'], s['type']))}</td>
             <td><div class="titre">{esc(s['titre'])}</div><div class="description">{esc(s['description'])}</div>
             <div class="objectif">{esc(s['objectif'])}</div></td>
@@ -247,7 +251,7 @@ def page_home() -> None:
 
     st.header("Prochaines séances")
     plan = get("/planning/actif")
-    upcoming = [s for w in (plan or {}).get("semaines", []) for s in w["seances"]][:3]
+    upcoming = [s for w in (plan or {}).get("semaines", []) for s in w["seances"] if not s.get("passee")][:3]
     if upcoming:
         sessions_table(upcoming)
     goal = (plan or {}).get("objectif_actif")
