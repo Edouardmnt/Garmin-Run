@@ -124,8 +124,8 @@ def test_coach_repond_a_une_question(app_env):
     at.chat_input[0].set_value("Quelle allure pour mon footing ?").run()
     assert not at.exception, at.exception
     assert any("Réponse de test" in m.value for m in at.markdown)  # réponse affichée mot à mot
-    note = " ".join(c.value for c in at.caption)
-    assert "allures" in note and "jetons/s" in note  # données consultées et vitesse mesurée
+    note = " ".join(m.value for m in at.markdown)
+    assert "Allures" in note and "jetons/s" in note  # données consultées et vitesse mesurée
     assert len(at.session_state["coach_messages"]) == 2
     next(b for b in at.button if "bilan" in b.label).click().run()
     assert not at.exception and "bilan" in at.session_state

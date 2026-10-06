@@ -473,14 +473,20 @@ def visible_text(chunks, meta: dict):
             meta["erreur"] = line.removeprefix("[[ERREUR]]").strip()
 
 
+TOPIC_NAMES = {"allures": "Allures", "predictions": "Prédictions", "nutrition": "Nutrition", "seances": "Séances",
+               "planning": "Planning"}
+
+
 def footnote(meta: dict) -> str:
-    topics = [t for t in meta.get("sujets", "").split(",") if t]
-    text = "Données consultées : contexte du jour" + (", " + ", ".join(topics) if topics else "")
+    """Sources et vitesse d'une réponse, en petites étiquettes (HTML)."""
+    topics = [TOPIC_NAMES.get(t, t) for t in meta.get("sujets", "").split(",") if t]
+    chips = "".join(f'<span class="etiquette">{esc(t)}</span>' for t in ["Contexte du jour", *topics])
     m = meta.get("mesures") or {}
+    speed = ""
     if m.get("duree_s") is not None:
-        speed = f", {m['jetons_par_s']} jetons/s".replace(".", ",") if m.get("jetons_par_s") else ""
-        text += f". Réponse en {m['duree_s']:.0f} s{speed}."
-    return text
+        rate = f", {m['jetons_par_s']} jetons/s".replace(".", ",") if m.get("jetons_par_s") else ""
+        speed = f'<span class="vitesse">{m["duree_s"]:.0f} s{rate}</span>'
+    return f'<div class="sources">{chips}{speed}</div>'
 
 
 def stream_answer(payload: dict) -> dict:
@@ -494,18 +500,34 @@ def stream_answer(payload: dict) -> dict:
     if meta.get("erreur"):
         st.error(f"Le coach n'a pas pu répondre : {meta['erreur']}")
     else:
-        st.caption(footnote(meta))
+        st.markdown(footnote(meta), unsafe_allow_html=True)
     return {"content": text if isinstance(text, str) else "".join(text), "note": footnote(meta),
             "erreur": meta.get("erreur")}
 
 
+def coach_today() -> None:
+    """Ce que le coach voit aujourd'hui : verdict et chiffres du jour, en une ligne."""
+    forme, analyse = get("/forme"), get("/analyse")
+    if not (forme and analyse):
+        return
+    verdict = analyse["verdict"]
+    color = LEVEL_COLORS[verdict["niveau"]]
+    hrv = "—" if forme["hrv_ecart_pct"] is None else f"{forme['hrv_ecart_pct']:+.0f} %"
+    sleep = "—" if forme["sommeil_h"] is None else f"{forme['sommeil_h']:.1f} h".replace(".", ",")
+    fresh = "—" if forme["fraicheur_tsb"] is None else f"{forme['fraicheur_tsb']:+.0f}"
+    cells = [("VFC vs normale", hrv), ("Sommeil", sleep), ("Fraîcheur", fresh)]
+    figures = "".join(f"<div><span>{esc(k)}</span><b>{esc(v)}</b></div>" for k, v in cells)
+    st.markdown(f'<div class="coach-jour"><div class="coach-verdict"><span class="point" style="background:{color}">'
+                f'</span>{esc(verdict["titre"])}<small>{verdict["score"]} sur 100</small></div>'
+                f'<div class="coach-chiffres">{figures}</div></div>', unsafe_allow_html=True)
+
+
 def page_coach() -> None:
-    st.title("Ton coach")
     status = get("/coach/statut") or {}
-    st.markdown(f'<div class="lecture"><p>Tu échanges avec une <b>intelligence artificielle</b> : le modèle '
-                f'{esc(status.get("modele", "local"))}, qui tourne sur ta machine. Tes données ne quittent pas ton '
-                "ordinateur. Ses conseils s'appuient sur tes chiffres, mais ne remplacent pas l'avis d'un "
-                "professionnel de santé, et il ne modifie rien à ta place.</p></div>", unsafe_allow_html=True)
+    st.title("Ton coach")
+    st.markdown(f'<p class="mention-ia">Intelligence artificielle : modèle {esc(status.get("modele", "local"))}, '
+                "exécuté sur ta machine. Tes données ne la quittent pas. Ses conseils ne remplacent pas l'avis d'un "
+                "professionnel de santé, et il ne modifie rien à ta place.</p>", unsafe_allow_html=True)
     if not status.get("disponible"):
         model = esc(status.get("modele", ""))
         st.markdown(f'<div class="donnees" style="margin-top:1rem"><h4>Coach indisponible</h4><p>'
@@ -513,35 +535,50 @@ def page_coach() -> None:
                     f'et que le modèle est téléchargé : <code>ollama pull {model}</code>.</p></div>',
                     unsafe_allow_html=True)
         return
+    coach_today()
 
-    st.header("Bilan de la semaine")
-    if st.button("Rédiger mon bilan" if "bilan" not in st.session_state else "Rédiger un nouveau bilan"):
-        st.session_state.pop("bilan", None)
-        answer = stream_answer({"bilan": True})
-        if not answer["erreur"]:
-            st.session_state["bilan"] = answer
-    elif "bilan" in st.session_state:
-        st.markdown(st.session_state["bilan"]["content"])
-        st.caption(st.session_state["bilan"]["note"])
+    # Bilan : un article, avec ses sources
+    with st.container(key="tete_bilan"):  # titre et action sur une même ligne, soulignée d'un seul filet
+        head, action = st.columns([4, 1], vertical_alignment="center")
+        head.markdown('<div class="titre-section">Bilan de la semaine</div>', unsafe_allow_html=True)
+        with action.container(key="action_bilan"):
+            redo = st.button("Rédiger un nouveau bilan" if "bilan" in st.session_state else "Rédiger mon bilan")
+    with st.container(key="bilan"):
+        if redo:
+            st.session_state.pop("bilan", None)
+            answer = stream_answer({"bilan": True})
+            if not answer["erreur"]:
+                st.session_state["bilan"] = answer
+        elif "bilan" in st.session_state:
+            st.markdown(st.session_state["bilan"]["content"])
+            st.markdown(st.session_state["bilan"]["note"], unsafe_allow_html=True)
+        else:
+            st.markdown('<p class="vide">Le coach résume ta semaine (charge, récupération, sommeil, stress) et te '
+                        "propose la suite, en lien avec ton objectif.</p>", unsafe_allow_html=True)
 
-    st.header("Pose ta question")
-    cols = st.columns(len(SUGGESTIONS))
+    # Conversation
+    st.header("Discussion")
     question = None
-    for col, suggestion in zip(cols, SUGGESTIONS):
-        if col.button(suggestion, use_container_width=True):
-            question = suggestion
-    question = st.chat_input("Ta question au coach") or question
+    with st.container(key="suggestions"):
+        cols = st.columns(len(SUGGESTIONS))
+        for col, suggestion in zip(cols, SUGGESTIONS):
+            if col.button(suggestion, use_container_width=True):
+                question = suggestion
+    question = st.chat_input("Pose ta question au coach") or question
 
     history = st.session_state.setdefault("coach_messages", [])
-    for message in history:
-        with st.chat_message(message["role"]):
+    if not history and not question:
+        st.markdown('<p class="vide">Pose une question sur ta forme, tes allures, ta prochaine séance ou ta course : '
+                    "le coach répond avec tes données.</p>", unsafe_allow_html=True)
+    for i, message in enumerate(history):
+        with st.container(key=f"msg_{i}_{message['role']}"):
             st.markdown(message["content"])
             if message.get("note"):
-                st.caption(message["note"])
+                st.markdown(message["note"], unsafe_allow_html=True)
     if question:
-        with st.chat_message("user"):
+        with st.container(key=f"msg_{len(history)}_user"):
             st.markdown(question)
-        with st.chat_message("assistant"):
+        with st.container(key=f"msg_{len(history) + 1}_assistant"):
             answer = stream_answer({"question": question,
                                     "historique": [{"role": m["role"], "content": m["content"]} for m in history]})
         if not answer["erreur"]:

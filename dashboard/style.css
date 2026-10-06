@@ -132,7 +132,71 @@ h3 { font-size: 1rem !important; font-weight: 600 !important; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
 /* Coach : messages sobres */
-[data-testid="stChatMessage"] { background: transparent; border-bottom: 1px solid var(--filet); border-radius: 0; }
-.stButton button { font-weight: 500; }
-[data-testid^="stChatMessageAvatar"] { background: var(--surface) !important; color: var(--encre) !important; }
-[data-testid="stChatMessageAvatarAssistant"] { background: var(--accent) !important; color: #fff !important; }
+
+
+/* Titres : pas d'icône de lien */
+[data-testid="stHeaderActionElements"] { display: none !important; }
+
+/* --- Coach ------------------------------------------------------------------------------------- */
+.mention-ia { color: var(--gris); font-size: .88rem; margin: .1rem 0 1.6rem; max-width: 70ch; }
+
+.coach-jour {
+  display: flex; align-items: center; justify-content: space-between; gap: 2rem; flex-wrap: wrap;
+  border-top: 1px solid var(--filet); border-bottom: 1px solid var(--filet); padding: 1rem 0;
+}
+.coach-verdict { display: flex; align-items: center; gap: .6rem; font-size: 1.25rem; font-weight: 500; }
+.coach-verdict .point { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.coach-verdict small { color: var(--gris); font-size: .85rem; font-weight: 400; margin-left: .3rem; }
+.coach-chiffres { display: flex; gap: 2rem; padding-right: .3rem; }
+.coach-chiffres span { display: block; color: var(--gris); font-size: .82rem; }
+.coach-chiffres b { font-weight: 300; font-size: 1.45rem; font-variant-numeric: tabular-nums; }
+
+/* Bilan : un article de lecture confortable */
+.st-key-bilan { border-left: 2px solid var(--accent); padding: .2rem 0 .2rem 1.4rem; }
+.st-key-bilan p, .st-key-bilan li { font-size: 1.06rem; line-height: 1.7; max-width: 72ch; }
+.st-key-action_bilan button {
+  border: none; background: transparent; color: var(--accent); font-weight: 600; padding: 0; box-shadow: none;
+}
+.st-key-action_bilan button:hover { color: var(--encre); background: transparent; }
+.st-key-action_bilan { display: flex; justify-content: flex-end; }
+.vide { color: var(--gris); font-style: normal; margin: .2rem 0; }
+
+/* Sources d'une réponse : petites étiquettes */
+.sources { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-top: .7rem; }
+.etiquette {
+  border: 1px solid var(--filet); border-radius: 999px; padding: .1rem .65rem; font-size: .78rem; color: var(--gris);
+}
+.vitesse { color: var(--gris); font-size: .78rem; margin-left: .4rem; font-variant-numeric: tabular-nums; }
+
+/* Suggestions : pastilles */
+.st-key-suggestions button {
+  border-radius: 999px; border: 1px solid var(--filet); background: #fff; font-weight: 500; font-size: .92rem;
+  padding: .45rem 1rem; min-height: 0;
+}
+.st-key-suggestions button:hover { border-color: var(--accent); color: var(--accent); background: #fff; }
+
+/* Conversation sans avatars : questions à droite, réponses avec un filet vert */
+[class*="st-key-msg_"][class*="_user"] {
+  margin-left: auto; max-width: 70%; background: var(--surface); border-radius: 14px 14px 2px 14px;
+  padding: .75rem 1.1rem; width: fit-content !important; height: auto !important; overflow: visible !important;
+}
+/* Streamlit place une marge négative sous chaque texte : dans une bulle, elle rognerait le bas */
+[class*="st-key-msg_"] [data-testid="stMarkdownContainer"] { margin-bottom: 0 !important; }
+[class*="st-key-msg_"][class*="_user"] p { margin: 0; }
+[class*="st-key-msg_"][class*="_assistant"] {
+  border-left: 2px solid var(--accent); padding: .1rem 0 .1rem 1.2rem; max-width: 80%;
+}
+[class*="st-key-msg_"][class*="_assistant"] p, [class*="st-key-msg_"][class*="_assistant"] li { line-height: 1.65; }
+
+/* Barre de saisie alignée sur la colonne de contenu */
+[data-testid="stBottomBlockContainer"] { max-width: 1120px; margin: 0 auto; padding: .8rem 2rem 1.4rem; }
+[data-testid="stChatInput"], [data-testid="stChatInput"] > div {
+  background: #fff !important; border-radius: 999px !important;
+}
+[data-testid="stChatInput"] { border: 1px solid var(--filet) !important; }
+[data-testid="stChatInput"]:focus-within { border-color: var(--accent) !important; }
+[data-testid="stChatInput"] textarea { font-size: .98rem; }
+
+.st-key-tete_bilan { border-bottom: 1px solid var(--filet); margin-top: 2.2rem; padding-bottom: .35rem; }
+.titre-section { font-size: 1.05rem; font-weight: 600; }
+.st-key-tete_bilan + div, .st-key-bilan { margin-top: .4rem; }
