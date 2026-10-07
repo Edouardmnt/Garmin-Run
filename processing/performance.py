@@ -131,6 +131,12 @@ def race_effort(run: pd.Series) -> tuple[float, float]:
 MIN_RPE_FOR_PERFORMANCE = 7  # « Difficile » ou « Maximal » dans le questionnaire
 
 
+def _dplus(run: pd.Series) -> float:
+    """D+ d'une sortie ; absent (tapis, montre sans altimètre) = 0. NaN n'est pas « faux » en Python."""
+    value = run.get("elevation_gain_m")
+    return float(value) if value is not None and pd.notna(value) else 0.0
+
+
 def collect_performances(activities: pd.DataFrame, labels: pd.DataFrame | None = None,
                          efforts: dict[int, float] | None = None) -> pd.DataFrame:
     """Performances utilisables : TOUTES les courses, et les meilleurs 5/10 km des seances dures uniquement.
@@ -148,7 +154,7 @@ def collect_performances(activities: pd.DataFrame, labels: pd.DataFrame | None =
 
     for _, r in runs[runs["kind"] == "course"].iterrows():
         distance, time_s = race_effort(r)
-        dplus = (r.get("elevation_gain_m") or 0) * distance / r["distance_m"]  # D+ au prorata de la portion
+        dplus = _dplus(r) * distance / r["distance_m"]  # D+ au prorata de la portion
         rows.append({"date": r["date"], "distance_m": flat_equivalent_m(distance, dplus), "time_s": time_s,
                      "source": "course", "dplus_m": round(dplus)})
 
@@ -157,7 +163,7 @@ def collect_performances(activities: pd.DataFrame, labels: pd.DataFrame | None =
         if col in hard:
             for _, r in hard[hard[col].notna()].iterrows():
                 source = f"meilleur {int(dist / 1000)} km ({r['kind']})"
-                dplus = (r.get("elevation_gain_m") or 0) * dist / r["distance_m"]
+                dplus = _dplus(r) * dist / r["distance_m"]
                 rows.append({"date": r["date"], "distance_m": flat_equivalent_m(dist, dplus), "time_s": r[col],
                              "source": source, "dplus_m": round(dplus)})
 
@@ -350,11 +356,12 @@ def hr_pace_model(runs: pd.DataFrame) -> dict | None:
     steady = runs[runs["kind"].isin(["ef", "tempo", "course"]) & runs["avg_hr"].notna()]
     if len(steady) < 5 or steady["avg_hr"].nunique() < 3:
         return None
-    speed = 1000 / steady["pace_s"]  # m/s
-    slope, intercept = np.polyfit(steady["avg_hr"], speed, 1)
+    speed = (1000 / steady["pace_s"]).astype(float)  # m/s
+    hr = steady["avg_hr"].astype(float)  # astype : les colonnes à valeurs manquantes peuvent être de type objet
+    slope, intercept = np.polyfit(hr, speed, 1)
     if slope <= 0:
         return None  # relation incohérente (chaleur, dénivelé...) : on ne s'en sert pas
-    predicted = intercept + slope * steady["avg_hr"]
+    predicted = intercept + slope * hr
     r2 = 1 - ((speed - predicted) ** 2).sum() / ((speed - speed.mean()) ** 2).sum()
     return {"pente": float(slope), "ordonnee": float(intercept), "r2": float(r2), "sorties": int(len(steady))}
 

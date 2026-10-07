@@ -838,8 +838,110 @@ def page_paces() -> None:
 
 # --- Séances -------------------------------------------------------------------------------------
 
+def pace_axis(fig: go.Figure, values_s: list[float], **kwargs) -> None:
+    """Axe d'allure lisible (min/km), le plus rapide en haut."""
+    lo, hi = min(values_s) - 10, max(values_s) + 10
+    step = 15 if hi - lo > 60 else 5
+    ticks = list(range(int(lo // step * step), int(hi) + step, step))
+    fig.update_layout(yaxis=dict(tickvals=ticks, ticktext=[f"{t // 60}'{t % 60:02d}" for t in ticks],
+                                 range=[hi, lo], title="Allure (min/km)", **kwargs))
+
+
+def run_analysis_section() -> None:
+    """Analyse d'une sortie : allure et FC au km, zones cardiaques, efficacité comparée."""
+    runs = (get("/courses", limite=15) or {}).get("courses", [])
+    if not runs:
+        return
+    labels = {r["activity_id"]: (f"{date.fromisoformat(r['date'][:10]).strftime('%d/%m')}  ·  "
+                                 f"{r['distance_km']:g} km  ·  {TYPE_NAMES.get(r['type'], 'Sortie')}").replace(".", ",")
+              for r in runs}
+    chosen = st.selectbox("Sortie", list(labels), format_func=labels.get, key="sortie_analysee")
+    data = get("/courses/analyse", activity_id=chosen)
+    if not data:
+        return
+    r = data["resume"]
+    when = date.fromisoformat(r["date"][:10]).strftime("%d/%m/%Y")
+    fc = f"{r['fc_moyenne']} bpm ({r['fc_pct_max']} % FC max)" if r["fc_moyenne"] else "—"
+    hero(f"{r['type_libelle'].capitalize()} du {when}, à {r['date'][11:]}", r["allure"].removesuffix("/km"),
+         [("Distance", f"{r['distance_km']:g} km".replace(".", ",")), ("Durée", f"{r['duree_min']} min"),
+          ("FC moyenne", fc), ("Dénivelé", f"{r['denivele_m']} m")])
+
+    sections = data["sections"]
+    st.header("Allure et fréquence cardiaque, kilomètre par kilomètre")
+    laps = data["tours"]
+    if laps:
+        km = [f"{i + 1}" for i in range(len(laps))]
+        paces = [t["allure_s"] for t in laps]
+        fig = go.Figure()
+        conf = data.get("conformite")
+        reco_note = ""
+        if conf:
+            fast, slow = conf["rapide_s"], conf["lente_s"]
+            fig.add_hrect(y0=fast, y1=slow, fillcolor="rgba(31,92,74,.07)", line_width=0)
+            reco_note = f" La bande verte pâle est ta fourchette conseillée pour ce type de séance ({conf['fourchette']})."
+        fig.add_scatter(x=km, y=[t["fc"] for t in laps], name="FC moyenne (bpm)", yaxis="y2", mode="lines+markers",
+                        line=dict(color=GRIS, width=1.5, dash="dot"), marker=dict(size=5),
+                        hovertemplate="km %{x} : %{y} bpm<extra></extra>")
+        fig.add_scatter(x=km, y=paces, name="Allure", mode="lines+markers", line=dict(color=ACCENT, width=2.5),
+                        marker=dict(size=7), text=[t["allure"] for t in laps],
+                        hovertemplate="km %{x} : %{text}<extra></extra>")
+        pace_axis(fig, paces + ([fast, slow] if conf else []))
+        hrs = [t["fc"] for t in laps if t["fc"]]
+        fig.update_layout(yaxis2=dict(title="FC (bpm)", overlaying="y", side="right", showgrid=False, tickformat="d",
+                                      range=[min(hrs) - 10, max(hrs) + 10] if hrs else None),
+                          xaxis_title="Kilomètre", hovermode="x unified")
+        fig.update_xaxes(tickformat=None, type="category")
+        figure(fig, 320)
+        explain("La ligne verte est ton allure à chaque kilomètre (plus haut = plus rapide), la ligne grise pointillée "
+                "ta fréquence cardiaque moyenne sur ce kilomètre. Une allure stable avec une FC qui monte doucement est "
+                "normale : c'est la dérive cardiaque. Si la FC grimpe nettement alors que l'allure baisse, l'effort "
+                "était trop élevé pour la durée." + reco_note, {"points": sections["allure"]})
+    else:
+        st.markdown('<p class="vide">Pas de détail au kilomètre pour cette sortie (tapis, ou sortie de plus de '
+                    "60 jours).</p>", unsafe_allow_html=True)
+
+    if data.get("zones"):
+        st.header("Zones cardiaques")
+        zones = data["zones"]
+        colors = ["#C9CDD3", "#5E8C7E", ACCENT, VIGILANCE, ALERTE]
+        fig = go.Figure(go.Bar(x=[z["pct"] for z in zones], y=[z["nom"] for z in zones], orientation="h",
+                               marker_color=colors, text=[f"{z['pct']} %  ·  {z['minutes']} min" for z in zones],
+                               textposition="outside", cliponaxis=False,
+                               hovertemplate="%{y} : %{x} %<extra></extra>"))
+        fig.update_layout(xaxis=dict(visible=False, range=[0, max(z["pct"] for z in zones) * 1.3]),
+                          yaxis=dict(autorange="reversed"), showlegend=False, bargap=0.45)
+        figure(fig, 250)
+        explain("Le temps passé dans chacune des 5 zones cardiaques définies par ta montre. Une endurance fondamentale "
+                "doit rester surtout en zones 1 et 2 ; un tempo vise les zones 3 et 4 ; un fractionné monte en zones "
+                "4 et 5 sur les répétitions.", {"points": sections["zones"]})
+
+    st.header("Ton efficacité, sortie après sortie")
+    history = [x for x in runs if x["efficacite"]]
+    if len(history) >= 3:
+        fig = go.Figure()
+        for kind in dict.fromkeys(x["type"] for x in history):
+            pts = [x for x in history if x["type"] == kind]
+            fig.add_scatter(x=[x["date"][:10] for x in pts], y=[x["efficacite"] for x in pts], mode="markers",
+                            name=TYPE_NAMES.get(kind, "Autre"), marker=dict(size=9, color=TYPE_COLORS.get(kind, GRIS)),
+                            text=[f"{x['distance_km']:g} km à {x['allure']}, {x['fc_moyenne']} bpm" for x in pts],
+                            hovertemplate="%{x} : %{y:.2f} m/battement<br>%{text}<extra></extra>")
+        current = next((x for x in history if x["activity_id"] == chosen), None)
+        if current:
+            fig.add_scatter(x=[current["date"][:10]], y=[current["efficacite"]], mode="markers", showlegend=False,
+                            marker=dict(size=17, color="rgba(0,0,0,0)", line=dict(color=ENCRE, width=2)),
+                            hoverinfo="skip")
+        fig.update_layout(yaxis_title="mètres par battement", hovermode="closest")
+        figure(fig, 280)
+    explain("Chaque point est une sortie : la distance que tu parcours pour un battement de cœur, avec la montée "
+            "convertie en distance de plat. À allure égale, une FC plus basse fait monter le point : c'est le "
+            "signe le plus direct de progression en endurance. Compare les points d'un même type de séance ; la "
+            "sortie analysée est entourée.", {"points": sections["efficacite"]})
+
+
 def page_sessions() -> None:
     st.title("Mes séances")
+    run_analysis_section()
+    st.header("Historique")
     data = get("/seances", limite=50)
     if not data:
         return

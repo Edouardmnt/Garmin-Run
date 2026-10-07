@@ -3,6 +3,7 @@
 Sorties :
 - data/silver/activities.parquet : une ligne par activité
 - data/silver/daily.parquet      : une ligne par jour (sommeil, VFC, repos, stress)
+- data/silver/splits.parquet     : une ligne par tour (souvent 1 km) des sorties de course récentes
 
 Le script ne modifie jamais data/raw : on peut le relancer à volonté.
 """
@@ -71,6 +72,8 @@ def build_activities() -> pd.DataFrame:
             "fastest_1k_s": a.get("fastestSplit_1000"),
             "fastest_5k_s": a.get("fastestSplit_5000"),
             "fastest_10k_s": a.get("fastestSplit_10000"),
+            # Temps (s) passé dans chaque zone cardiaque de la montre
+            **{f"hr_z{z}_s": a.get(f"hrTimeInZone_{z}") for z in range(1, 6)},
         })
 
     df = pd.DataFrame(rows)
@@ -84,6 +87,26 @@ def build_activities() -> pd.DataFrame:
     df["pace_min_km"] = (df["duration_min"] / df["distance_km"]).where(is_run)
 
     return df.sort_values("start_time").reset_index(drop=True)
+
+
+def build_splits() -> pd.DataFrame:
+    """Une ligne par tour (souvent 1 km) des sorties dont les tours ont été récupérés."""
+    rows = []
+    for path in sorted((RAW_DIR / "splits").glob("*.json")) if (RAW_DIR / "splits").exists() else []:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for lap in (data or {}).get("lapDTOs") or []:
+            rows.append({
+                "activity_id": int(data.get("activityId") or path.stem),
+                "lap": lap.get("lapIndex"),
+                "distance_m": lap.get("distance"),
+                "duration_s": lap.get("movingDuration") or lap.get("duration"),
+                "avg_hr": lap.get("averageHR"),
+                "max_hr": lap.get("maxHR"),
+                "elevation_gain_m": lap.get("elevationGain"),
+                "cadence": lap.get("averageRunCadence"),
+            })
+    cols = ["activity_id", "lap", "distance_m", "duration_s", "avg_hr", "max_hr", "elevation_gain_m", "cadence"]
+    return pd.DataFrame(rows, columns=cols)
 
 
 def build_daily() -> pd.DataFrame:
@@ -152,6 +175,10 @@ def main() -> None:
     quality_report("activities", activities)
     print("\nActivités par sport :")
     print(activities["sport"].value_counts().to_string())
+
+    splits = build_splits()
+    splits.to_parquet(SILVER_DIR / "splits.parquet", index=False)
+    print(f"\nTours au km : {len(splits)} tours, {splits['activity_id'].nunique()} sorties")
 
     daily = build_daily()
     daily.to_parquet(SILVER_DIR / "daily.parquet", index=False)

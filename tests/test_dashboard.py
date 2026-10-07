@@ -156,3 +156,17 @@ def test_synchronisation_a_l_ouverture(private_data, monkeypatch):
     assert not at.exception, at.exception
     assert gold.stat().st_mtime > old  # la synchronisation a bien tourné
     assert any("synchronisées à l'instant" in html.unescape(m.value) for m in at.markdown)  # texte tel qu'affiché
+
+
+def test_analyse_de_sortie(app_env):
+    at = open_page("Séances")
+    assert not at.exception, at.exception
+    headers = [h.value for h in at.header]
+    assert "Allure et fréquence cardiaque, kilomètre par kilomètre" in headers and "Zones cardiaques" in headers
+    from fastapi.testclient import TestClient
+
+    import api.main
+
+    other = TestClient(api.main.app).get("/courses").json()["courses"][1]["activity_id"]
+    at.selectbox(key="sortie_analysee").set_value(other).run()  # analyse d'une autre sortie
+    assert not at.exception, at.exception

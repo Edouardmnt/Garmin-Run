@@ -133,6 +133,7 @@ uvicorn api.main:app --reload     # documentation interactive : http://127.0.0.1
 | `POST /questionnaire/{id}` | Enregistre les réponses : type de séance, effort ressenti, douleur, justesse du temps prédit ou de l'allure, forme avant le départ |
 | `GET /questionnaire/bilan` | Ce que les questionnaires disent de la justesse des prédictions, des allures et du verdict |
 | `GET /nutrition?distance=semi&temperature_c=22` | Nutrition et hydratation avant, pendant (avec repères en minutes et en kilomètres) et après la course |
+| `GET /courses`, `GET /courses/analyse?activity_id=…` | Dernières sorties avec leur efficacité, et analyse d'une sortie : allure et FC au kilomètre, régularité, dérive cardiaque, zones cardiaques, comparaison avec les sorties du même type |
 | `GET /seances` | Dernières sorties avec leur type (étiquette personnelle, sinon suggestion par règles) |
 
 **Méthode de prédiction** (`processing/performance.py`) : les formules de **Daniels et Gilbert (VDOT)** transforment une performance réelle en indicateur de capacité aérobie, puis en temps sur chaque distance et en allures d'entraînement. Les tests vérifient la conformité aux tables publiées de Daniels. Les performances utilisées sont les courses étiquetées et les meilleurs temps sur 1, 5 et 10 km calculés par Garmin dans chaque sortie, sur les 90 derniers jours.
@@ -159,7 +160,7 @@ Une interface **Streamlit** au style sportif, chic et épuré : beaucoup de blan
 | **Planning** | Plan jusqu'à la course : phases (développement, spécifique, affûtage), jours de tennis respectés, séances détaillées avec allures et FC personnelles, adapté aux douleurs signalées, au sommeil, au stress et au ressenti des footings |
 | **Prédictions** | Temps sur chaque distance, avec D+ et forme du jour, comparé à la montre, le détail du calcul, et la nutrition et l'hydratation adaptées à la durée prévue et à la température |
 | **Allures** | Échelle visuelle des allures (EF, tempo, fractionné, allures de course) et leur origine |
-| **Séances** | Historique filtrable par type | Elle ne lit jamais les données directement : elle **interroge l'API**, comme le fera le coach IA, pour que tout le monde s'appuie sur les mêmes calculs.
+| **Séances** | Analyse d'une sortie (allure et FC au kilomètre avec la fourchette conseillée, zones cardiaques, efficacité comparée aux sorties récentes), puis historique filtrable par type | Elle ne lit jamais les données directement : elle **interroge l'API**, comme le fera le coach IA, pour que tout le monde s'appuie sur les mêmes calculs.
 
 ```bash
 uvicorn api.main:app            # terminal 1 : l'API
@@ -376,6 +377,7 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 │   ├── insights.py              # verdict du jour et analyses rédigées (nuit, journée, stress, activités)
 │   ├── feedback.py              # questionnaire après sortie et exploitation des réponses
 │   ├── nutrition.py             # nutrition et hydratation de course
+│   ├── run_analysis.py          # analyse d'une sortie : régularité, dérive cardiaque, zones, efficacité
 │   ├── goals.py                 # objectifs de course
 │   ├── coach.py                 # coach IA : modèle local Ollama, outils, garde-fous
 │   ├── watch.py                 # conversion des séances en entraînements Garmin, envoi sans doublon

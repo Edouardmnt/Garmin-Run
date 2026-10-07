@@ -29,6 +29,7 @@ TOKENSTORE = os.path.expanduser(os.getenv("GARMINTOKENS", "~/.garminconnect"))
 INITIAL_DAYS = int(os.getenv("GARMIN_DAYS", "200"))
 MAX_DAYS = 365  # garde-fou : jamais plus d'un an d'un coup
 REFRESH_DAYS = 2  # jours retéléchargés avant le dernier jour connu : ils étaient peut-être incomplets
+SPLITS_DAYS = 60  # au-delà, inutile pour l'analyse des dernières sorties
 PAUSE = 1.0  # secondes entre deux appels, pour ne pas surcharger Garmin
 
 
@@ -96,13 +97,26 @@ def main() -> None:
     types = Counter(a.get("activityType", {}).get("typeKey", "?") for a in activities)
     print(f"{len(new)} activités récupérées, {len(activities)} au total : {dict(types)}")
 
-    # 2. Prédictions de course calculées par la montre : référence de comparaison pour l'API
+    # 2. Tours au km des sorties de course des 60 derniers jours, récupérés une seule fois par sortie
+    recent = (end - timedelta(days=SPLITS_DAYS)).isoformat()
+    runs = [a for a in activities if "running" in (a.get("activityType", {}).get("typeKey") or "")
+            and (a.get("startTimeLocal") or "") >= recent
+            and not (RAW_DIR / "splits" / f"{a['activityId']}.json").exists()]
+    for a in runs:
+        splits = safe_call(client.get_activity_splits, a["activityId"])
+        if splits:
+            save(RAW_DIR / "splits" / f"{a['activityId']}.json", splits)
+        time.sleep(PAUSE)
+    if runs:
+        print(f"Tours au km récupérés pour {len(runs)} sortie(s).")
+
+    # 3. Prédictions de course calculées par la montre : référence de comparaison pour l'API
     predictions = safe_call(client.get_race_predictions) if hasattr(client, "get_race_predictions") else None
     if predictions:
         save(RAW_DIR / "race_predictions.json", predictions)
         print("Prédictions de course de la montre enregistrées.")
 
-    # 3. Données quotidiennes : chaque jour de la période, dans l'ordre chronologique.
+    # 4. Données quotidiennes : chaque jour de la période, dans l'ordre chronologique.
     # Si le script est interrompu, la prochaine exécution reprend au dernier jour écrit.
     for i in range((end - start).days + 1):
         day = (start + timedelta(days=i)).isoformat()

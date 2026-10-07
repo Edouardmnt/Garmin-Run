@@ -58,7 +58,35 @@ def make_activity(activity_id: int, day: date, sport: str) -> dict:
         "anaerobicTrainingEffect": round(random.uniform(0.5, 2.5), 1),
         "vO2MaxValue": vo2,
         **fastest_splits(distance, speed),
+        **hr_zones(duration_min * 60, avg_hr),
     }
+
+
+def hr_zones(duration_s: float, avg_hr: float) -> dict:
+    """Temps passé dans chaque zone cardiaque, centré sur la zone de la FC moyenne (déterministe)."""
+    center = min(5, max(1, int((avg_hr / HR_MAX - 0.5) / 0.1) + 1))
+    weights = {z: max(0.0, 1 - abs(z - center) * 0.6) for z in range(1, 6)}
+    total = sum(weights.values())
+    return {f"hrTimeInZone_{z}": round(duration_s * w / total) for z, w in weights.items()}
+
+
+def make_splits(act: dict) -> dict | None:
+    """Tours de 1 km d'une sortie : légère accélération finale, dérive cardiaque progressive (déterministe)."""
+    distance, speed, hr = act.get("distance"), act.get("averageSpeed"), act["averageHR"]
+    if not distance or not speed:
+        return None
+    n_full, laps = int(distance // 1000), []
+    style = act["activityId"] % 3  # 0 : régulier, 1 : départ trop rapide, 2 : finish accéléré
+    for i in range(n_full + (1 if distance % 1000 > 100 else 0)):
+        km = 1000 if i < n_full else distance % 1000
+        progress = i / max(1, n_full)
+        factor = {0: 1.0, 1: 1.04 - 0.08 * progress, 2: 0.98 + 0.05 * progress}[style]
+        lap_speed = speed * factor
+        laps.append({"lapIndex": i + 1, "distance": round(km, 1), "duration": round(km / lap_speed, 1),
+                     "averageSpeed": round(lap_speed, 3), "averageHR": round(hr - 6 + 12 * progress),
+                     "maxHR": round(hr - 2 + 12 * progress), "elevationGain": round(5 + (i * 7) % 11, 1),
+                     "averageRunCadence": 164 + (i * 3) % 7})
+    return {"activityId": act["activityId"], "lapDTOs": laps}
 
 
 def fastest_splits(distance, speed) -> dict:
@@ -153,6 +181,11 @@ def main() -> None:
         (OUT_DIR / "daily" / f"{day.isoformat()}.json").write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
 
     (OUT_DIR / "activities.json").write_text(json.dumps(activities, ensure_ascii=False, indent=2), encoding="utf-8")
+    (OUT_DIR / "splits").mkdir(parents=True, exist_ok=True)
+    for act in activities:
+        splits = make_splits(act)
+        if splits:
+            (OUT_DIR / "splits" / f"{act['activityId']}.json").write_text(json.dumps(splits), encoding="utf-8")
     print(f"{len(activities)} activités et {DAYS + 1} jours synthétiques écrits dans {OUT_DIR}")
 
 

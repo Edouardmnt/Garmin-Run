@@ -69,6 +69,7 @@ from processing.performance import (
     vo2max_history,
 )
 from processing.planning import build_plan, category_for
+from processing.run_analysis import analyse_run, efficiency_history
 from processing.watch import load_history, send_session, to_garmin_workout
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -756,4 +757,57 @@ def lancer_sync(
 ) -> dict:
     """Lance une synchronisation en arrière-plan (une seule à la fois) ; suivre avec GET /sync/statut."""
     return SYNC.start(si_plus_ancienne_que_min)
+
+
+# --- Analyse des sorties de course ----------------------------------------------------------------
+
+def runs_with_kind() -> pd.DataFrame:
+    acts = read_parquet("silver/activities.parquet")
+    runs = acts[(acts["sport"] == "running") & (acts["distance_m"] > 1000)].copy()
+    runs["date"] = pd.to_datetime(runs["start_time"])
+    labels = read_labels()
+    kinds = {} if labels is None else dict(zip(labels["activity_id"], labels["label"].where(
+        labels["label"].notna() & (labels["label"].astype(str).str.strip() != ""), labels["suggestion"])))
+    runs["kind"] = runs["activity_id"].map(kinds)
+    return efficiency_history(runs.sort_values("date"))
+
+
+@app.get("/courses", tags=["analyse"])
+def courses(limite: int = Query(15, ge=1, le=100)) -> dict:
+    """Dernières sorties de course, avec leur efficacité (pour la liste et la courbe de tendance)."""
+    runs = runs_with_kind()
+    out = []
+    for r in runs.tail(limite).iloc[::-1].itertuples():
+        out.append({"activity_id": int(r.activity_id), "date": r.date.strftime("%Y-%m-%d %H:%M"),
+                    "distance_km": round(r.distance_m / 1000, 2), "type": r.kind,
+                    "fc_moyenne": None if pd.isna(r.avg_hr) else int(r.avg_hr),
+                    "allure": pace_txt((r.moving_duration_s if pd.notna(r.moving_duration_s) else r.duration_s)
+                                       / (r.distance_m / 1000)),
+                    "efficacite": None if pd.isna(r.efficacite) else round(r.efficacite, 3)})
+    return {"courses": out}
+
+
+@app.get("/courses/analyse", tags=["analyse"])
+def analyse_course(activity_id: int | None = Query(None, description="Sortie à analyser ; par défaut la dernière")) -> dict:
+    """Analyse d'une sortie : allure et FC au km, régularité, dérive cardiaque, zones, efficacité."""
+    runs = runs_with_kind()
+    if runs.empty:
+        raise HTTPException(404, "Aucune sortie de course.")
+    match = runs[runs["activity_id"] == activity_id] if activity_id else runs.tail(1)
+    if match.empty:
+        raise HTTPException(404, "Sortie introuvable.")
+    run = match.iloc[-1]
+    path = DATA_DIR / "silver" / "splits.parquet"
+    splits = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=["activity_id"])
+    laps = splits[splits["activity_id"] == run["activity_id"]]
+    acts = read_parquet("silver/activities.parquet")
+    hr_max = float(acts["max_hr"].max())
+    reco = None
+    if run["kind"] in ("ef", "tempo"):
+        try:
+            reco = allures(fenetre_jours=120)["zones"][run["kind"]]["recommandation"]
+        except HTTPException:
+            reco = None
+    result = analyse_run(run, laps, run["kind"] if isinstance(run["kind"], str) else None, runs, hr_max, reco)
+    return {"activity_id": int(run["activity_id"]), **result}
 
