@@ -67,3 +67,42 @@ def test_erreur_d_etape_remontee(sync_client, monkeypatch):
     main.SYNC.wait()
     status = client.get("/sync/statut").json()
     assert "Étape qui échoue" in status["erreur"] and "boum" in status["erreur"] and not status["en_cours"]
+
+
+def test_statut_lisible_pendant_les_ecritures(tmp_path):
+    """Lectures et écritures simultanées : la lecture ne voit jamais un fichier vide ou partiel."""
+    import threading
+
+    from api.sync import SyncManager
+
+    manager = SyncManager(tmp_path)
+    stop, errors = threading.Event(), []
+
+    def writer():
+        i = 0
+        while not stop.is_set():
+            manager._save(etape=f"étape {i}", progression=i % 100 / 100, erreur=None)
+            i += 1
+
+    thread = threading.Thread(target=writer)
+    thread.start()
+    try:
+        for _ in range(3000):
+            saved = manager._read_status()
+            if saved and "etape" not in saved:
+                errors.append(saved)
+    finally:
+        stop.set()
+        thread.join()
+    assert not errors
+    assert manager._read_status()["etape"].startswith("étape")
+    assert not list(tmp_path.glob("sync/*.tmp"))  # aucun fichier temporaire oublié
+
+
+def test_statut_illisible_ne_plante_pas(tmp_path):
+    from api.sync import SyncManager
+
+    manager = SyncManager(tmp_path)
+    manager.dir.mkdir(parents=True)
+    manager.status_file.write_text("", encoding="utf-8")  # fichier vide, comme en pleine écriture
+    assert manager.status()["en_cours"] is False

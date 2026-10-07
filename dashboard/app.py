@@ -7,7 +7,6 @@ Sans API séparée :  $env:RUNLAB_API_URL = "inprocess"; streamlit run dashboard
 import html
 import json
 import os
-import time
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -882,42 +881,48 @@ def age_text(minutes: int | None) -> str:
     return f"synchronisées il y a {minutes // 1440} j"
 
 
-def follow_sync() -> None:
-    """Barre de progression jusqu'à la fin de la synchronisation, puis rechargement avec les nouvelles données."""
-    bar = st.progress(0.03, text="Mise à jour de tes données…")
+def sync_status_line() -> None:
+    """Zone qui se rafraîchit seule : barre pendant la synchronisation, âge des données ensuite.
+
+    La page entière reste utilisable pendant ce temps ; à la fin, elle se recharge avec les nouvelles données.
+    """
     status = fresh_status()
-    for _ in range(300):  # au plus 5 minutes
-        status = fresh_status()
-        bar.progress(max(float(status.get("progression") or 0), 0.03), text=status.get("etape") or "Finalisation…")
-        if not status.get("en_cours"):
-            break
-        time.sleep(1)
-    bar.empty()
-    if status.get("erreur"):
-        st.warning(f"Mise à jour incomplète : {status['erreur']}. Tes dernières données restent affichées.")
-    else:
+    if not status:
+        return
+    if status.get("en_cours"):
+        st.session_state["synchro_suivie"] = True
+        st.progress(max(float(status.get("progression") or 0), 0.03),
+                    text=f"Mise à jour : {(status.get('etape') or 'finalisation').lower()}…")
+        return
+    if st.session_state.pop("synchro_suivie", False):  # elle vient de se terminer
         api_get.clear()
-        st.rerun()
+        if status.get("erreur"):
+            st.session_state["synchro_erreur"] = status["erreur"]
+        st.rerun(scope="app")
+    with st.container(key="etat_synchro", horizontal=True, horizontal_alignment="center",
+                      vertical_alignment="center", gap="small"):
+        error = st.session_state.get("synchro_erreur")
+        text = (f"Mise à jour incomplète, données {age_text(status.get('age_min'))}" if error
+                else f"Données {age_text(status.get('age_min'))}")
+        st.markdown(f'<p class="age-donnees">{esc(text)}</p>', unsafe_allow_html=True, width="content")
+        if st.button("Mettre à jour", width="content"):
+            st.session_state.pop("synchro_erreur", None)
+            ok, _ = post("/sync", {})
+            if ok:
+                st.session_state["synchro_suivie"] = True
+                st.rerun(scope="app")  # relance la zone en mode « rafraîchissement automatique »
 
 
 def sync_header() -> None:
-    """Sous le nom : âge des données et lien « Mettre à jour » ; synchronisation automatique à l'ouverture."""
+    """Synchronisation automatique à l'ouverture si les données ont vieilli, sans bloquer la page."""
     if AUTO_SYNC and "synchro_ouverture" not in st.session_state:
         st.session_state["synchro_ouverture"] = True
         ok, answer = post(f"/sync?si_plus_ancienne_que_min={AUTO_SYNC_AFTER_MIN}", {})
         if ok and (answer.get("lancee") or answer.get("en_cours")):
-            follow_sync()
-    status = fresh_status()
-    if not status:
-        return
-    with st.container(key="etat_synchro", horizontal=True, horizontal_alignment="center",
-                      vertical_alignment="center", gap="small"):
-        st.markdown(f'<p class="age-donnees">Données {age_text(status.get("age_min"))}</p>', unsafe_allow_html=True,
-                    width="content")
-        if st.button("Mettre à jour", disabled=bool(status.get("en_cours")), width="content"):
-            ok, answer = post("/sync", {})
-            if ok:
-                follow_sync()
+            st.session_state["synchro_suivie"] = True
+    # Pendant une synchronisation, la zone se rafraîchit chaque seconde ; sinon, elle reste immobile
+    running = st.session_state.get("synchro_suivie", False)
+    st.fragment(sync_status_line, run_every=1 if running else None)()
 
 
 PAGES = {"Accueil": page_home, "Coach": page_coach, "Objectifs": page_goals, "Planning": page_planning,

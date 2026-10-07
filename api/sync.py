@@ -51,7 +51,7 @@ class SyncManager:
         return self.lock.exists() and time.time() - self.lock.stat().st_mtime < STALE_LOCK_S
 
     def status(self) -> dict:
-        saved = json.loads(self.status_file.read_text(encoding="utf-8")) if self.status_file.exists() else {}
+        saved = self._read_status()
         last = self.last_sync()
         return {
             "en_cours": self.running(),
@@ -62,9 +62,29 @@ class SyncManager:
             "age_min": None if last is None else round((datetime.now() - last).total_seconds() / 60),
         }
 
+    def _read_status(self) -> dict:
+        """Lecture tolérante : un fichier illisible donne un état vide, jamais une erreur."""
+        try:
+            return json.loads(self.status_file.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, PermissionError):
+            return {}
+
     def _save(self, **fields) -> None:
+        """Écriture atomique : fichier temporaire, puis renommage instantané.
+
+        write_text vide le fichier avant d'écrire : une lecture à cet instant trouverait un fichier vide.
+        Avec os.replace, un lecteur voit l'ancien contenu complet ou le nouveau, jamais un état intermédiaire.
+        """
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.status_file.write_text(json.dumps(fields, ensure_ascii=False), encoding="utf-8")
+        tmp = self.status_file.with_name(f"statut.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(fields, ensure_ascii=False), encoding="utf-8")
+        for attempt in range(5):
+            try:
+                os.replace(tmp, self.status_file)
+                return
+            except PermissionError:  # Windows : le fichier est ouvert en lecture à cet instant précis
+                time.sleep(0.05 * (attempt + 1))
+        tmp.unlink(missing_ok=True)
 
     # --- Lancement --------------------------------------------------------------------------------
     def start(self, older_than_min: int | None = None) -> dict:

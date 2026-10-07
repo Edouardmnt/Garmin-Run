@@ -133,16 +133,26 @@ def test_coach_repond_a_une_question(app_env):
 
 
 def test_synchronisation_a_l_ouverture(private_data, monkeypatch):
-    """Données anciennes : la page lance la mise à jour, suit sa progression, puis se recharge."""
+    """Données anciennes : la synchronisation démarre, la page reste utilisable, puis se recharge."""
+    import html
     import os
+    import time
 
     monkeypatch.setenv("RUNLAB_AUTO_SYNC", "1")
     monkeypatch.setenv("RUNLAB_SYNC_STEPS", "demo")
     gold = private_data / "gold" / "daily_features.parquet"
     old = gold.stat().st_mtime - 3 * 3600
     os.utime(gold, (old, old))  # données vieilles de 3 heures
-    at = AppTest.from_file("../dashboard/app.py", default_timeout=120)
+    at = AppTest.from_file("../dashboard/app.py", default_timeout=60)
     at.run()
     assert not at.exception, at.exception
+    assert at.radio(key="page").value == "Accueil" and at.title[0].value == "Ta journée"  # rien n'est bloqué
+    assert at.session_state["synchro_suivie"] is True
+    for _ in range(90):  # le rafraîchissement automatique est simulé par des relances
+        time.sleep(1)
+        at.run()
+        if any("synchronisées à l'instant" in html.unescape(m.value) for m in at.markdown):
+            break
+    assert not at.exception, at.exception
     assert gold.stat().st_mtime > old  # la synchronisation a bien tourné
-    assert any("synchronisées à l'instant" in m.value for m in at.markdown)
+    assert any("synchronisées à l'instant" in html.unescape(m.value) for m in at.markdown)  # texte tel qu'affiché
