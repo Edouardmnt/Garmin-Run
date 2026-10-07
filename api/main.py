@@ -18,6 +18,7 @@ import requests
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from api.sync import SyncManager
 from processing.coach import (
     BILAN_PROMPT,
     COACH_MODE,
@@ -735,4 +736,24 @@ def bilan_coach(regenerer: bool = False) -> dict:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return {**result, "en_cache": False}
+
+
+# --- Synchronisation à la demande -----------------------------------------------------------------
+
+SYNC = SyncManager(DATA_DIR)
+
+
+@app.get("/sync/statut", tags=["synchronisation"])
+def statut_sync() -> dict:
+    """Synchronisation en cours (étape, progression), et âge des données."""
+    return SYNC.status()
+
+
+@app.post("/sync", tags=["synchronisation"])
+def lancer_sync(
+    si_plus_ancienne_que_min: int | None = Query(None, ge=0, le=1440,
+                                                 description="Ne synchronise que si les données ont plus de N minutes"),
+) -> dict:
+    """Lance une synchronisation en arrière-plan (une seule à la fois) ; suivre avec GET /sync/statut."""
+    return SYNC.start(si_plus_ancienne_que_min)
 

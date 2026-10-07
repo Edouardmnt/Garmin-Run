@@ -205,6 +205,8 @@ Une fois le cluster démarré (automatiquement à l'ouverture de session Windows
 | Données (séances, nuits, stress) | CronJob `garmin-sync` toutes les 3 heures de 6 h à 21 h : synchronisation, couches silver et gold, ajout des nouvelles sorties au fichier d'étiquetage (sans écraser les étiquettes), séance du jour sur la montre (sans doublon) |
 | Code | Chaque push publie une image (CI) ; le CronJob `redeploy` redémarre l'API et le tableau de bord chaque matin à 5 h 30 pour qu'ils l'utilisent. Il appelle directement l'API de Kubernetes avec un compte de service aux droits limités (RBAC) à ces deux Deployments |
 | Accès | `ops/windows/port-forward.ps1` garde http://localhost:8501 ouvert en arrière-plan et le rouvre après chaque redémarrage |
+| À l'ouverture | Si les données ont plus de 30 minutes, l'application lance une synchronisation (`POST /sync`) et affiche sa progression étape par étape, puis se recharge ; un lien « Mettre à jour » la relance à la demande. Un verrou sur le volume garantit une seule synchronisation à la fois (`api/sync.py`) |
+| Au démarrage du PC | Le script de démarrage lance une synchronisation de rattrapage, pour récupérer ce qui s'est passé pendant la veille |
 
 Le cluster est le seul à se connecter à Garmin : un seul jeu de jetons, pas de conflit. Objectifs et questionnaires sont enregistrés par l'API sur le volume du cluster.
 

@@ -47,7 +47,7 @@ spec:
               cpu: 50m
               memory: 256Mi
             limits:
-              memory: 512Mi
+              memory: 1Gi          # la synchronisation à la demande (pandas) tourne dans ce Pod
           volumeMounts:
             - name: data
               mountPath: /data

@@ -21,6 +21,7 @@ def app_env(data_dir):
     mp.setenv("RUNLAB_DATA_DIR", str(data_dir))
     mp.setenv("RUNLAB_API_URL", "inprocess")
     mp.setenv("RUNLAB_LLM", "fake")  # faux modèle : pas d'Ollama dans les tests
+    mp.setenv("RUNLAB_AUTO_SYNC", "0")  # pas de synchronisation à l'ouverture, sauf dans le test dédié
     import importlib
 
     import api.main
@@ -129,3 +130,19 @@ def test_coach_repond_a_une_question(app_env):
     assert len(at.session_state["coach_messages"]) == 2
     next(b for b in at.button if "bilan" in b.label).click().run()
     assert not at.exception and "bilan" in at.session_state
+
+
+def test_synchronisation_a_l_ouverture(private_data, monkeypatch):
+    """Données anciennes : la page lance la mise à jour, suit sa progression, puis se recharge."""
+    import os
+
+    monkeypatch.setenv("RUNLAB_AUTO_SYNC", "1")
+    monkeypatch.setenv("RUNLAB_SYNC_STEPS", "demo")
+    gold = private_data / "gold" / "daily_features.parquet"
+    old = gold.stat().st_mtime - 3 * 3600
+    os.utime(gold, (old, old))  # données vieilles de 3 heures
+    at = AppTest.from_file("../dashboard/app.py", default_timeout=120)
+    at.run()
+    assert not at.exception, at.exception
+    assert gold.stat().st_mtime > old  # la synchronisation a bien tourné
+    assert any("synchronisées à l'instant" in m.value for m in at.markdown)

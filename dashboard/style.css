@@ -40,7 +40,7 @@ h3 { font-size: 1rem !important; font-weight: 600 !important; }
 /* En-tête : marque et navigation en liens soulignés */
 .marque {
   text-align: center; font-weight: 300; font-stretch: 112%; font-size: 1.9rem; letter-spacing: .04em;
-  margin-bottom: .6rem;
+  margin-bottom: 0;
 }
 .st-key-page div[role="radiogroup"] {
   gap: 1.8rem; border-bottom: 1px solid var(--filet); flex-wrap: wrap; width: 100%; justify-content: center;
@@ -200,3 +200,17 @@ h3 { font-size: 1rem !important; font-weight: 600 !important; }
 .st-key-tete_bilan { border-bottom: 1px solid var(--filet); margin-top: 2.2rem; padding-bottom: .35rem; }
 .titre-section { font-size: 1.05rem; font-weight: 600; }
 .st-key-tete_bilan + div, .st-key-bilan { margin-top: .4rem; }
+
+/* Âge des données et « Mettre à jour », centrés sous le nom */
+.st-key-etat_synchro { margin: -.5rem 0 .3rem; }
+.age-donnees { color: var(--gris) !important; font-size: .82rem !important; margin: 0 !important; line-height: 1.4; }
+.st-key-etat_synchro button {
+  border: none; background: transparent; color: var(--accent); font-size: .82rem; font-weight: 600;
+  padding: 0; min-height: 0; box-shadow: none;
+}
+.st-key-etat_synchro button:hover { color: var(--encre); background: transparent; }
+.st-key-etat_synchro button p { font-size: .82rem !important; line-height: 1.4; }
+[data-testid="stProgress"] > div > div > div > div { background-color: var(--accent); }
+/* Barre de synchronisation : courte et centrée sous le nom */
+[data-testid="stProgress"] { max-width: 420px; margin: .4rem auto 0; }
+[data-testid="stProgress"] p { text-align: center; color: var(--gris) !important; font-size: .85rem !important; }

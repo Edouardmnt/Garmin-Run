@@ -7,6 +7,7 @@ Sans API séparée :  $env:RUNLAB_API_URL = "inprocess"; streamlit run dashboard
 import html
 import json
 import os
+import time
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -16,6 +17,8 @@ import requests
 import streamlit as st
 
 API_URL = os.getenv("RUNLAB_API_URL", "http://127.0.0.1:8000")
+AUTO_SYNC = os.getenv("RUNLAB_AUTO_SYNC", "1") == "1"  # synchronisation à l'ouverture si les données ont vieilli
+AUTO_SYNC_AFTER_MIN = 30
 DISTANCES = {"5 km": "5k", "10 km": "10k", "Semi": "semi", "Marathon": "marathon"}
 DAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 
@@ -855,10 +858,73 @@ def page_sessions() -> None:
     st.dataframe(table, hide_index=True, use_container_width=True)
 
 
+# --- Synchronisation à l'ouverture -----------------------------------------------------------------
+
+def fresh_status() -> dict:
+    """État de la synchronisation, sans cache (il change pendant qu'on le suit)."""
+    try:
+        if API_URL == "inprocess":
+            return inprocess_client().get("/sync/statut").json()
+        return requests.get(f"{API_URL}/sync/statut", timeout=10).json()
+    except (requests.ConnectionError, requests.Timeout, ValueError):
+        return {}
+
+
+def age_text(minutes: int | None) -> str:
+    if minutes is None:
+        return "jamais synchronisées"
+    if minutes < 1:
+        return "synchronisées à l'instant"
+    if minutes < 60:
+        return f"synchronisées il y a {minutes} min"
+    if minutes < 1440:
+        return f"synchronisées il y a {minutes // 60} h"
+    return f"synchronisées il y a {minutes // 1440} j"
+
+
+def follow_sync() -> None:
+    """Barre de progression jusqu'à la fin de la synchronisation, puis rechargement avec les nouvelles données."""
+    bar = st.progress(0.03, text="Mise à jour de tes données…")
+    status = fresh_status()
+    for _ in range(300):  # au plus 5 minutes
+        status = fresh_status()
+        bar.progress(max(float(status.get("progression") or 0), 0.03), text=status.get("etape") or "Finalisation…")
+        if not status.get("en_cours"):
+            break
+        time.sleep(1)
+    bar.empty()
+    if status.get("erreur"):
+        st.warning(f"Mise à jour incomplète : {status['erreur']}. Tes dernières données restent affichées.")
+    else:
+        api_get.clear()
+        st.rerun()
+
+
+def sync_header() -> None:
+    """Sous le nom : âge des données et lien « Mettre à jour » ; synchronisation automatique à l'ouverture."""
+    if AUTO_SYNC and "synchro_ouverture" not in st.session_state:
+        st.session_state["synchro_ouverture"] = True
+        ok, answer = post(f"/sync?si_plus_ancienne_que_min={AUTO_SYNC_AFTER_MIN}", {})
+        if ok and (answer.get("lancee") or answer.get("en_cours")):
+            follow_sync()
+    status = fresh_status()
+    if not status:
+        return
+    with st.container(key="etat_synchro", horizontal=True, horizontal_alignment="center",
+                      vertical_alignment="center", gap="small"):
+        st.markdown(f'<p class="age-donnees">Données {age_text(status.get("age_min"))}</p>', unsafe_allow_html=True,
+                    width="content")
+        if st.button("Mettre à jour", disabled=bool(status.get("en_cours")), width="content"):
+            ok, answer = post("/sync", {})
+            if ok:
+                follow_sync()
+
+
 PAGES = {"Accueil": page_home, "Coach": page_coach, "Objectifs": page_goals, "Planning": page_planning,
          "Ma forme": page_fitness, "Nuits & journées": page_nights, "Prédictions": page_predictions,
          "Allures": page_paces, "Séances": page_sessions}
 
 st.markdown('<div class="marque">Foulée</div>', unsafe_allow_html=True)
+sync_header()
 choice = st.radio("Navigation", list(PAGES), horizontal=True, label_visibility="collapsed", key="page")
 PAGES[choice]()
