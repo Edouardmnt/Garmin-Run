@@ -103,9 +103,11 @@ def build_splits() -> pd.DataFrame:
                 "avg_hr": lap.get("averageHR"),
                 "max_hr": lap.get("maxHR"),
                 "elevation_gain_m": lap.get("elevationGain"),
+                "elevation_loss_m": lap.get("elevationLoss"),
                 "cadence": lap.get("averageRunCadence"),
             })
-    cols = ["activity_id", "lap", "distance_m", "duration_s", "avg_hr", "max_hr", "elevation_gain_m", "cadence"]
+    cols = ["activity_id", "lap", "distance_m", "duration_s", "avg_hr", "max_hr", "elevation_gain_m",
+            "elevation_loss_m", "cadence"]
     return pd.DataFrame(rows, columns=cols)
 
 

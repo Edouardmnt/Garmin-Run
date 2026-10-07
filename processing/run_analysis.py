@@ -9,6 +9,10 @@ Indicateurs (repères usuels en entraînement, pas des règles absolues) :
 - zones cardiaques : répartition du temps, comparée à ce qu'on attend du type de séance ;
 - efficacité : mètres parcourus par battement cardiaque (allure ramenée sur le plat), comparée aux
   sorties récentes du même type : si elle monte, tu cours plus vite pour le même effort.
+
+Dénivelé : chaque kilomètre est aussi exprimé en allure équivalente sur le plat (équivalence de Scarf :
+1 m de montée = 7,92 m de plat). Régularité et dérive cardiaque se calculent sur cette allure, pour qu'une
+côte ne passe pas pour un coup de fatigue. La descente n'est pas créditée (choix prudent).
 """
 
 import numpy as np
@@ -56,6 +60,10 @@ def laps_table(laps: pd.DataFrame) -> pd.DataFrame:
     laps = laps.sort_values("lap").copy()
     laps = laps[(laps["distance_m"] >= 300) & (laps["duration_s"] > 0)]
     laps["pace_s"] = laps["duration_s"] / (laps["distance_m"] / 1000)
+    gain = laps["elevation_gain_m"].astype(float).fillna(0) if "elevation_gain_m" in laps else 0.0
+    laps["dplus"] = gain
+    laps["flat_m"] = flat_equivalent_m(laps["distance_m"].astype(float), gain)
+    laps["flat_pace_s"] = laps["duration_s"] / (laps["flat_m"] / 1000)  # allure équivalente sur le plat
     laps["km"] = laps["distance_m"].cumsum() / 1000
     return laps.reset_index(drop=True)
 
@@ -85,27 +93,35 @@ def analyse_run(run: pd.Series, laps: pd.DataFrame, kind: str | None, history: p
         "fc_moyenne": None if pd.isna(run.get("avg_hr")) else int(run["avg_hr"]),
         "fc_max": None if pd.isna(run.get("max_hr")) else int(run["max_hr"]),
         "fc_pct_max": None if pd.isna(run.get("avg_hr")) else round(run["avg_hr"] / hr_max * 100),
-        "denivele_m": round(dplus), "efficacite": None if eff is None else round(eff, 3),
+        "denivele_m": round(dplus), "denivele_par_km": round(dplus / (run["distance_m"] / 1000), 1),
+        "allure_plat": fmt_pace(duration / (flat_equivalent_m(run["distance_m"], dplus) / 1000)),
+        "efficacite": None if eff is None else round(eff, 3),
     }
 
     # --- Kilomètre par kilomètre
     laps = laps_table(laps) if laps is not None and len(laps) else pd.DataFrame()
+    if len(laps) and laps["dplus"].sum() > dplus:  # le D+ des tours est parfois plus complet que celui de la sortie
+        out["resume"]["denivele_m"] = round(float(laps["dplus"].sum()))
     out["tours"] = [{"km": round(r.km, 2), "allure": fmt_pace(r.pace_s), "allure_s": round(r.pace_s),
                      "fc": None if pd.isna(r.avg_hr) else int(r.avg_hr),
-                     "denivele_m": None if pd.isna(r.elevation_gain_m) else round(r.elevation_gain_m)}
+                     "allure_plat": fmt_pace(r.flat_pace_s), "allure_plat_s": round(r.flat_pace_s),
+                     "denivele_m": round(r.dplus)}
                     for r in laps.itertuples()]
     out["regularite"] = out["derive"] = None
     if len(laps) >= 4:
         main = laps[laps["distance_m"] >= 900] if (laps["distance_m"] >= 900).sum() >= 3 else laps
-        cv = main["pace_s"].std() / main["pace_s"].mean() * 100
+        cv = main["flat_pace_s"].std() / main["flat_pace_s"].mean() * 100
         first, second = halves(laps)
-        p1 = first["duration_s"].sum() / first["distance_m"].sum() * 1000
-        p2 = second["duration_s"].sum() / second["distance_m"].sum() * 1000
-        fast, slow = main.loc[main["pace_s"].idxmin()], main.loc[main["pace_s"].idxmax()]
+        p1 = first["duration_s"].sum() / first["flat_m"].sum() * 1000  # allures équivalentes sur le plat
+        p2 = second["duration_s"].sum() / second["flat_m"].sum() * 1000
+        fast, slow = main.loc[main["flat_pace_s"].idxmin()], main.loc[main["flat_pace_s"].idxmax()]
         out["regularite"] = {"variation_pct": round(cv, 1), "allure_1re_moitie": fmt_pace(p1),
                              "allure_2de_moitie": fmt_pace(p2), "ecart_s": round(p2 - p1),
                              "km_le_plus_rapide": int(fast.lap), "km_le_plus_lent": int(slow.lap)}
         steady = "très régulière" if cv < 3 else "régulière" if cv < 6 else "irrégulière"
+        climb_total = max(dplus, float(laps["dplus"].sum()))  # D+ des tours si plus complet que celui de la sortie
+        hilly = climb_total / (run["distance_m"] / 1000) >= 8
+        basis = " en équivalent plat" if hilly else ""
         if p2 < p1 - 3:
             split = f"tu as fini plus vite ({fmt_pace(p2)} contre {fmt_pace(p1)}) : un négative split, signe de bonne gestion"
         elif p2 > p1 + 8:
@@ -115,15 +131,24 @@ def analyse_run(run: pd.Series, laps: pd.DataFrame, kind: str | None, history: p
             split = f"tes deux moitiés sont proches ({fmt_pace(p1)} puis {fmt_pace(p2)})"
         extremes = ""
         if cv >= 1.5:  # sans écart notable, inutile de citer un kilomètre plus rapide qu'un autre
-            extremes = (f" Kilomètre le plus rapide : le {_nth(fast.lap)} en {fmt_pace(fast.pace_s)} ; "
-                        f"le plus lent : le {_nth(slow.lap)} en {fmt_pace(slow.pace_s)}.")
-        sections["allure"].append(f"Allure {steady} (variation de {_fr(cv)} % d'un kilomètre à l'autre) ; {split}.{extremes}")
+            extremes = (f" Kilomètre le plus rapide : le {_nth(fast.lap)} en {fmt_pace(fast.flat_pace_s)} ; "
+                        f"le plus lent : le {_nth(slow.lap)} en {fmt_pace(slow.flat_pace_s)}.")
+        sections["allure"].append(f"Allure {steady}{basis} (variation de {_fr(cv)} % d'un kilomètre à l'autre) ; "
+                                  f"{split}.{extremes}")
+        if hilly:
+            climb = laps.loc[laps["dplus"].idxmax()]
+            sections["allure"].insert(0, (
+                f"Parcours vallonné : {round(climb_total)} m de D+ ({_fr(climb_total / (run['distance_m'] / 1000), 0)} m/km), "
+                f"soit une allure de {fmt_pace(pace)} qui vaut "
+                f"{fmt_pace(duration / (flat_equivalent_m(run['distance_m'], climb_total) / 1000))} sur le plat. Le kilomètre le "
+                f"plus raide, le {_nth(climb.lap)} (+{round(climb.dplus)} m), couru en {fmt_pace(climb.pace_s)}, "
+                f"équivaut à {fmt_pace(climb.flat_pace_s)} sur le plat. Les allures ci-dessous en tiennent compte."))
 
         # Dérive cardiaque : efficacité (vitesse / FC) 1re moitié contre 2de moitié
         if first["avg_hr"].notna().all() and second["avg_hr"].notna().all() and kind != "fractionne":
             def ef(part):
                 hr = (part["avg_hr"] * part["duration_s"]).sum() / part["duration_s"].sum()
-                return part["distance_m"].sum() / part["duration_s"].sum() / hr
+                return part["flat_m"].sum() / part["duration_s"].sum() / hr
             drift = (ef(first) - ef(second)) / ef(first) * 100
             hr1 = (first["avg_hr"] * first["duration_s"]).sum() / first["duration_s"].sum()
             hr2 = (second["avg_hr"] * second["duration_s"]).sum() / second["duration_s"].sum()
@@ -162,7 +187,10 @@ def analyse_run(run: pd.Series, laps: pd.DataFrame, kind: str | None, history: p
     out["conformite"] = None
     if reco and reco.get("allure_rapide_s") and reco.get("allure_lente_s") and kind in ("ef", "tempo"):
         fast, slow = reco["allure_rapide_s"], reco["allure_lente_s"]
-        verdict = "dans ta fourchette" if fast - 5 <= pace <= slow + 5 else "plus rapide" if pace < fast else "plus lente"
+        # Les allures conseillées sont en équivalent plat : on compare l'allure de la sortie ramenée sur le plat
+        flat_pace = duration / (flat_equivalent_m(run["distance_m"], dplus) / 1000)
+        verdict = ("dans ta fourchette" if fast - 5 <= flat_pace <= slow + 5
+                   else "plus rapide" if flat_pace < fast else "plus lente")
         out["conformite"] = {"fourchette": f"{fmt_pace(fast)} à {fmt_pace(slow)}", "verdict": verdict,
                              "rapide_s": round(fast), "lente_s": round(slow)}
         sections["allure"].append(f"Allure {verdict} que tes allures {_de(kind_name)} ({fmt_pace(fast)} à {fmt_pace(slow)})"

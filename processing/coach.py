@@ -280,3 +280,23 @@ def answer_direct(llm, user_message: str, context: dict, fetchers: dict, history
     return {"reponse": "".join(parts).strip(), "outils_utilises": topics, "modele": getattr(llm, "model", "?"),
             "mesures": stats}
 
+
+# --- Commentaire d'une sortie ---------------------------------------------------------------------
+
+RUN_PROMPT = """Commente ma sortie analysée dans DONNÉES UTILES, comme un coach qui me connaît, en 6 à 10 phrases :
+1. ce qui s'est bien passé, chiffres à l'appui ;
+2. les points d'attention (allure, dérive cardiaque, zones, dénivelé), en tenant compte de ma nuit précédente,
+   de mon ressenti déclaré et de mon objectif ;
+3. un conseil concret et chiffré pour ma prochaine séance du même type.
+Compare avec mes sorties similaires quand c'est utile. Parle des allures équivalentes sur le plat quand le
+parcours était vallonné. N'invente aucun chiffre absent des données."""
+
+
+def run_commentary_stream(llm, run_data: dict, context: dict):
+    """Commentaire personnalisé d'une sortie, mot à mot, en un seul appel au modèle."""
+    data = json.dumps(context, ensure_ascii=False) + "\n\nDONNÉES UTILES : " + json.dumps(
+        run_data, ensure_ascii=False, default=str)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT.format(context=data)},
+                {"role": "user", "content": RUN_PROMPT}]
+    yield from llm.stream(messages)
+

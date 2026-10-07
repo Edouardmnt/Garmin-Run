@@ -214,3 +214,9 @@ h3 { font-size: 1rem !important; font-weight: 600 !important; }
 /* Barre de synchronisation : courte et centrée sous le nom */
 [data-testid="stProgress"] { max-width: 420px; margin: .4rem auto 0; }
 [data-testid="stProgress"] p { text-align: center; color: var(--gris) !important; font-size: .85rem !important; }
+.st-key-action_avis { display: flex; justify-content: flex-end; }
+.st-key-action_avis button {
+  border: none; background: transparent; color: var(--accent); font-weight: 600; padding: 0; box-shadow: none;
+}
+.st-key-action_avis button:hover { color: var(--encre); background: transparent; }
+.st-key-action_avis button p, .st-key-action_bilan button p { color: var(--accent) !important; font-weight: 600; }

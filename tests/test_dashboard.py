@@ -170,3 +170,6 @@ def test_analyse_de_sortie(app_env):
     other = TestClient(api.main.app).get("/courses").json()["courses"][1]["activity_id"]
     at.selectbox(key="sortie_analysee").set_value(other).run()  # analyse d'une autre sortie
     assert not at.exception, at.exception
+    next(b for b in at.button if "avis" in b.label).click().run()  # avis du coach (faux modèle)
+    assert not at.exception, at.exception
+    assert any("Réponse de test" in m.value for m in at.markdown)

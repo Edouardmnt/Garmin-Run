@@ -82,9 +82,12 @@ def make_splits(act: dict) -> dict | None:
         progress = i / max(1, n_full)
         factor = {0: 1.0, 1: 1.04 - 0.08 * progress, 2: 0.98 + 0.05 * progress}[style]
         lap_speed = speed * factor
-        laps.append({"lapIndex": i + 1, "distance": round(km, 1), "duration": round(km / lap_speed, 1),
-                     "averageSpeed": round(lap_speed, 3), "averageHR": round(hr - 6 + 12 * progress),
-                     "maxHR": round(hr - 2 + 12 * progress), "elevationGain": round(5 + (i * 7) % 11, 1),
+        gain = 5 + (i * 7) % 11 + (25 if i % 4 == 2 else 0)  # une côte tous les 4 km
+        duration = (km + 7.92 * gain * km / 1000) / lap_speed  # la montée ralentit (équivalence de Scarf)
+        laps.append({"lapIndex": i + 1, "distance": round(km, 1), "duration": round(duration, 1),
+                     "averageSpeed": round(km / duration, 3), "averageHR": round(hr - 6 + 12 * progress),
+                     "maxHR": round(hr - 2 + 12 * progress), "elevationGain": round(gain, 1),
+                     "elevationLoss": round(5 + (i * 5) % 9 + (20 if i % 4 == 3 else 0), 1),
                      "averageRunCadence": 164 + (i * 3) % 7})
     return {"activityId": act["activityId"], "lapDTOs": laps}
 

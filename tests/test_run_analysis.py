@@ -69,3 +69,41 @@ def test_points_d_acces(data_dir, monkeypatch):
     out = client.get("/courses/analyse", params={"activity_id": runs[1]["activity_id"]}).json()
     assert out["activity_id"] == runs[1]["activity_id"] and out["tours"] and out["points"]
     assert client.get("/courses/analyse", params={"activity_id": 123456789}).status_code == 404
+
+
+def test_le_denivele_est_ramene_sur_le_plat():
+    # km 3 avec 40 m de D+ : plus lent en réel, mais même effort sur le plat
+    flat = [300] * 8
+    real = [300 + (40 * 7.92 / 1000 * 300 if i == 2 else 0) for i in range(8)]
+    lap_df = laps(real, [150] * 8).assign(elevation_gain_m=[40 if i == 2 else 0 for i in range(8)])
+    out = analyse_run(run(elevation_gain_m=40), lap_df, "ef", EMPTY, 193)
+    third = out["tours"][2]
+    assert third["allure_s"] > third["allure_plat_s"] == flat[2]
+    assert out["regularite"]["variation_pct"] < 0.5  # régulier une fois la côte prise en compte
+
+
+def test_commentaire_du_coach_garde_en_cache(data_dir, tmp_path, monkeypatch):
+    import importlib
+    import shutil
+
+    from fastapi.testclient import TestClient
+
+    import api.main
+
+    data = tmp_path / "data"
+    shutil.copytree(data_dir, data)
+    monkeypatch.setenv("RUNLAB_DATA_DIR", str(data))
+    monkeypatch.setenv("RUNLAB_LLM", "fake")
+    importlib.reload(api.main)
+    client = TestClient(api.main.app)
+    run_id = client.get("/courses").json()["courses"][0]["activity_id"]
+    context = api.main.run_context(run_id)
+    assert {"kilometres", "nuit_precedente_et_forme", "ressenti_declare", "sorties_similaires"} <= context.keys()
+    assert client.get("/courses/commentaire", params={"activity_id": run_id}).json()["commentaire"] is None
+    with client.stream("POST", "/courses/commentaire/flux", json={"activity_id": run_id}) as r:
+        body = "".join(r.iter_text())
+    assert "Réponse de test" in body and "[[MESURES]]" in body
+    saved = client.get("/courses/commentaire", params={"activity_id": run_id}).json()
+    assert saved["commentaire"].startswith("Réponse de test") and "[[" not in saved["commentaire"]
+    monkeypatch.setenv("RUNLAB_DATA_DIR", str(data_dir))
+    importlib.reload(api.main)

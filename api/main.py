@@ -28,6 +28,7 @@ from processing.coach import (
     get_llm,
     run_coach,
     run_coach_direct_stream,
+    run_commentary_stream,
 )
 from processing.feedback import (
     apply_feedback_labels,
@@ -810,4 +811,78 @@ def analyse_course(activity_id: int | None = Query(None, description="Sortie à 
             reco = None
     result = analyse_run(run, laps, run["kind"] if isinstance(run["kind"], str) else None, runs, hr_max, reco)
     return {"activity_id": int(run["activity_id"]), **result}
+
+
+# --- Commentaire de sortie par le coach IA ---------------------------------------------------------
+
+def run_context(activity_id: int) -> dict:
+    """Tout ce qui rend le commentaire personnel : analyse, nuit précédente, ressenti, sorties comparables."""
+    analysis = analyse_course(activity_id)
+    runs = runs_with_kind()
+    run = runs[runs["activity_id"] == activity_id].iloc[-1]
+    day = pd.Timestamp(run["date"]).normalize()
+    gold = read_parquet("gold/daily_features.parquet").assign(date=lambda d: pd.to_datetime(d["date"]))
+    night = gold[gold["date"] == day]
+    hrv_ref = gold[gold["date"] < day]["hrv_last_night"].tail(28).mean()
+    night_info = None
+    if len(night):
+        n = night.iloc[0]
+        night_info = {"sommeil_h": None if pd.isna(n["sleep_h"]) else round(float(n["sleep_h"]), 1),
+                      "vfc": None if pd.isna(n["hrv_last_night"]) else int(n["hrv_last_night"]),
+                      "vfc_normale_28j": None if pd.isna(hrv_ref) else round(float(hrv_ref)),
+                      "fraicheur_tsb": None if pd.isna(n["tsb"]) else round(float(n["tsb"]))}
+    feedback = next((f["reponses"] for f in load_feedback(DATA_DIR) if f["activity_id"] == activity_id), None)
+    similar = runs[(runs["kind"] == run["kind"]) & (runs["date"] < run["date"])].tail(5)
+    comparables = [{"date": r.date.strftime("%Y-%m-%d"), "distance_km": round(r.distance_m / 1000, 1),
+                    "allure": pace_txt((r.moving_duration_s if pd.notna(r.moving_duration_s) else r.duration_s)
+                                       / (r.distance_m / 1000)),
+                    "fc_moyenne": None if pd.isna(r.avg_hr) else int(r.avg_hr),
+                    "denivele_m": None if pd.isna(r.elevation_gain_m) else round(r.elevation_gain_m)}
+                   for r in similar.itertuples()]
+    laps = [{k: t[k] for k in ("km", "allure", "allure_plat", "fc", "denivele_m")} for t in analysis["tours"]]
+    return {"sortie": analysis["resume"], "kilometres": laps, "regularite": analysis["regularite"],
+            "derive_cardiaque": analysis["derive"], "zones": analysis["zones"], "conformite": analysis["conformite"],
+            "efficacite_vs_sorties_similaires": analysis["comparaison"], "constats": analysis["points"],
+            "nuit_precedente_et_forme": night_info, "ressenti_declare": feedback, "sorties_similaires": comparables}
+
+
+def commentary_file(activity_id: int):
+    return DATA_DIR / "coach" / f"sortie-{activity_id}.json"
+
+
+@app.get("/courses/commentaire", tags=["analyse"])
+def commentaire_course(activity_id: int) -> dict:
+    """Commentaire du coach déjà rédigé pour cette sortie (ou null)."""
+    path = commentary_file(activity_id)
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"commentaire": None}
+
+
+@app.post("/courses/commentaire/flux", tags=["analyse"])
+def commentaire_course_flux(activity_id: int = Body(..., embed=True)):
+    """Le coach IA commente la sortie, mot à mot ; le texte est gardé pour ne pas le régénérer à chaque visite."""
+    data = run_context(activity_id)
+    context = coach_context()
+    llm = get_llm()
+    sources = ["sortie", "kilometres", "zones", "nuit", "ressenti", "sorties similaires"]
+
+    def body():
+        parts, stats = [], None
+        try:
+            for item in run_commentary_stream(llm, data, context):
+                if isinstance(item, dict):
+                    stats = item
+                    yield "\n[[MESURES]] " + json.dumps(item)
+                else:
+                    parts.append(item)
+                    yield item
+        except requests.RequestException as exc:
+            yield f"\n[[ERREUR]] Le modèle local ne répond pas ({llm.model}) : {exc}"
+            return
+        path = commentary_file(activity_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"commentaire": "".join(parts).strip(), "mesures": stats, "modele": llm.model,
+                                    "sujets": sources}, ensure_ascii=False), encoding="utf-8")
+
+    return StreamingResponse(body(), media_type="text/plain; charset=utf-8",
+                             headers={"X-Coach-Sujets": ",".join(sources)})
 

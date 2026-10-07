@@ -133,7 +133,8 @@ uvicorn api.main:app --reload     # documentation interactive : http://127.0.0.1
 | `POST /questionnaire/{id}` | Enregistre les réponses : type de séance, effort ressenti, douleur, justesse du temps prédit ou de l'allure, forme avant le départ |
 | `GET /questionnaire/bilan` | Ce que les questionnaires disent de la justesse des prédictions, des allures et du verdict |
 | `GET /nutrition?distance=semi&temperature_c=22` | Nutrition et hydratation avant, pendant (avec repères en minutes et en kilomètres) et après la course |
-| `GET /courses`, `GET /courses/analyse?activity_id=…` | Dernières sorties avec leur efficacité, et analyse d'une sortie : allure et FC au kilomètre, régularité, dérive cardiaque, zones cardiaques, comparaison avec les sorties du même type |
+| `GET /courses`, `GET /courses/analyse?activity_id=…` | Dernières sorties avec leur efficacité, et analyse d'une sortie : allure réelle et équivalente sur le plat au kilomètre (D+), régularité, dérive cardiaque, zones cardiaques, comparaison avec les sorties du même type |
+| `POST /courses/commentaire/flux`, `GET /courses/commentaire` | Avis du coach IA sur une sortie, à partir de l'analyse, des kilomètres, de la nuit précédente, du ressenti déclaré et des sorties similaires ; gardé en cache |
 | `GET /seances` | Dernières sorties avec leur type (étiquette personnelle, sinon suggestion par règles) |
 
 **Méthode de prédiction** (`processing/performance.py`) : les formules de **Daniels et Gilbert (VDOT)** transforment une performance réelle en indicateur de capacité aérobie, puis en temps sur chaque distance et en allures d'entraînement. Les tests vérifient la conformité aux tables publiées de Daniels. Les performances utilisées sont les courses étiquetées et les meilleurs temps sur 1, 5 et 10 km calculés par Garmin dans chaque sortie, sur les 90 derniers jours.

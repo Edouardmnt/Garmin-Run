@@ -476,7 +476,8 @@ def visible_text(chunks, meta: dict):
 
 
 TOPIC_NAMES = {"allures": "Allures", "predictions": "Prédictions", "nutrition": "Nutrition", "seances": "Séances",
-               "planning": "Planning"}
+               "planning": "Planning", "sortie": "Sortie", "kilometres": "Kilomètres", "zones": "Zones cardiaques",
+               "nuit": "Nuit précédente", "ressenti": "Ton ressenti", "sorties similaires": "Sorties similaires"}
 
 
 def footnote(meta: dict) -> str:
@@ -491,11 +492,11 @@ def footnote(meta: dict) -> str:
     return f'<div class="sources">{chips}{speed}</div>'
 
 
-def stream_answer(payload: dict) -> dict:
+def stream_answer(payload: dict, path: str = "/coach/question/flux") -> dict:
     """Affiche la réponse au fil de sa rédaction, puis ses sources et sa vitesse."""
     meta = {}
     try:
-        text = st.write_stream(visible_text(stream_post("/coach/question/flux", payload, meta), meta))
+        text = st.write_stream(visible_text(stream_post(path, payload, meta), meta))
     except (requests.ConnectionError, requests.Timeout) as exc:
         meta["erreur"] = str(exc)
         text = ""
@@ -847,6 +848,29 @@ def pace_axis(fig: go.Figure, values_s: list[float], **kwargs) -> None:
                                  range=[hi, lo], title="Allure (min/km)", **kwargs))
 
 
+def coach_comment(activity_id: int) -> None:
+    """L'avis du coach IA sur la sortie : déjà rédigé, ou à demander (une dizaine de secondes)."""
+    head, action = st.columns([4, 1], vertical_alignment="center")
+    head.markdown('<div class="titre-section">L\'avis de ton coach</div>', unsafe_allow_html=True)
+    saved = get("/courses/commentaire", activity_id=activity_id) or {}
+    with action.container(key="action_avis"):
+        ask = st.button("Demander à nouveau" if saved.get("commentaire") else "Demander son avis",
+                        key=f"avis_{activity_id}")
+    with st.container(key="bilan"):  # même mise en forme que le bilan du coach : un article à filet vert
+        if ask:
+            answer = stream_answer({"activity_id": activity_id}, "/courses/commentaire/flux")
+            if not answer["erreur"]:
+                api_get.clear()
+        elif saved.get("commentaire"):
+            st.markdown(saved["commentaire"])
+            st.markdown(footnote({"sujets": ",".join(saved.get("sujets", [])), "mesures": saved.get("mesures")}),
+                        unsafe_allow_html=True)
+        else:
+            st.markdown('<p class="vide">Le coach lit tout : tes kilomètres, ton dénivelé, tes zones, ta nuit '
+                        "précédente, ton ressenti et tes sorties similaires, puis te dit ce qu'il en pense.</p>",
+                        unsafe_allow_html=True)
+
+
 def run_analysis_section() -> None:
     """Analyse d'une sortie : allure et FC au km, zones cardiaques, efficacité comparée."""
     runs = (get("/courses", limite=15) or {}).get("courses", [])
@@ -866,6 +890,8 @@ def run_analysis_section() -> None:
          [("Distance", f"{r['distance_km']:g} km".replace(".", ",")), ("Durée", f"{r['duree_min']} min"),
           ("FC moyenne", fc), ("Dénivelé", f"{r['denivele_m']} m")])
 
+    coach_comment(chosen)
+
     sections = data["sections"]
     st.header("Allure et fréquence cardiaque, kilomètre par kilomètre")
     laps = data["tours"]
@@ -882,10 +908,18 @@ def run_analysis_section() -> None:
         fig.add_scatter(x=km, y=[t["fc"] for t in laps], name="FC moyenne (bpm)", yaxis="y2", mode="lines+markers",
                         line=dict(color=GRIS, width=1.5, dash="dot"), marker=dict(size=5),
                         hovertemplate="km %{x} : %{y} bpm<extra></extra>")
-        fig.add_scatter(x=km, y=paces, name="Allure", mode="lines+markers", line=dict(color=ACCENT, width=2.5),
-                        marker=dict(size=7), text=[t["allure"] for t in laps],
+        flats = [t["allure_plat_s"] for t in laps]
+        hilly = any(t["denivele_m"] >= 15 for t in laps)
+        if hilly:
+            fig.add_scatter(x=km, y=paces, name="Allure réelle", mode="lines+markers",
+                            line=dict(color="#9AA1AB", width=1.5), marker=dict(size=5),
+                            text=[f"{t['allure']}, D+ {t['denivele_m']} m" for t in laps],
+                            hovertemplate="km %{x} : %{text}<extra></extra>")
+        fig.add_scatter(x=km, y=flats if hilly else paces, name="Allure équivalente plat" if hilly else "Allure",
+                        mode="lines+markers", line=dict(color=ACCENT, width=2.5), marker=dict(size=7),
+                        text=[t["allure_plat"] if hilly else t["allure"] for t in laps],
                         hovertemplate="km %{x} : %{text}<extra></extra>")
-        pace_axis(fig, paces + ([fast, slow] if conf else []))
+        pace_axis(fig, paces + flats + ([fast, slow] if conf else []))
         hrs = [t["fc"] for t in laps if t["fc"]]
         fig.update_layout(yaxis2=dict(title="FC (bpm)", overlaying="y", side="right", showgrid=False, tickformat="d",
                                       range=[min(hrs) - 10, max(hrs) + 10] if hrs else None),
@@ -895,7 +929,10 @@ def run_analysis_section() -> None:
         explain("La ligne verte est ton allure à chaque kilomètre (plus haut = plus rapide), la ligne grise pointillée "
                 "ta fréquence cardiaque moyenne sur ce kilomètre. Une allure stable avec une FC qui monte doucement est "
                 "normale : c'est la dérive cardiaque. Si la FC grimpe nettement alors que l'allure baisse, l'effort "
-                "était trop élevé pour la durée." + reco_note, {"points": sections["allure"]})
+                "était trop élevé pour la durée." + reco_note
+                + (" Sur ce parcours vallonné, la ligne grise est ton allure réelle et la verte ton allure ramenée sur "
+                   "le plat (1 m de montée compte comme 7,92 m de plat) : c'est elle qui dit si ton effort était "
+                   "régulier." if hilly else ""), {"points": sections["allure"]})
     else:
         st.markdown('<p class="vide">Pas de détail au kilomètre pour cette sortie (tapis, ou sortie de plus de '
                     "60 jours).</p>", unsafe_allow_html=True)
