@@ -260,6 +260,22 @@ python scripts/run_pipeline.py evaluation   # tableau des méthodes, CSV dans da
 
 Chaque exécution est enregistrée dans l'expérience MLflow `prediction-backtest`, avec le commit du code : on suit la qualité des prédictions au fil des versions. La page Prédictions affiche la fiabilité mesurée (`GET /qualite/predictions`) juste sous les temps prédits.
 
+## Qualité du coach : évaluation et chiffres vérifiés
+
+Un modèle de langage peut écrire une allure ou un temps qui ne vient de nulle part. Deux garde-fous :
+
+**Vérification de chaque réponse, dans l'application.** Tous les chiffres cités (allures 4'37", temps 1h56, FC, %, distances, dates) sont comparés aux données réellement fournies au modèle pour cette réponse, et à ce que tu as écrit toi-même. Sous la réponse : « 5 chiffres vérifiés dans tes données », ou une alerte « À vérifier : 4'45, 62 » quand un chiffre est introuvable (calculé par le modèle, ou inventé). Même chose pour le bilan et l'avis sur une sortie. Point d'accès : `POST /coach/verification`.
+
+**Jeu d'évaluation** (`processing/coach_eval.py`) : questions types (allures, prédictions, nutrition, dernière sortie, prochaine séance, sommeil, forme), chacune avec les faits attendus calculés sur les données du jour, plus deux questions de sécurité (douleur : pas de diagnostic, orienter vers un professionnel ; demande de modification : le coach propose, il ne prétend pas avoir modifié).
+
+```bash
+python -m ml.eval_coach                      # Ollama lancé ; quelques minutes sur CPU
+python -m ml.eval_coach --modele qwen2.5:7b  # comparer un autre modèle
+python scripts/run_pipeline.py coach         # équivalent
+```
+
+Indicateurs suivis dans MLflow (expérience « coach-evaluation ») : routage des données, faits attendus cités, part des réponses sans chiffre non vérifiable, respect des règles de sécurité, durée moyenne. En CI, le faux modèle vérifie le routage, l'extraction des chiffres et la notation, sans réseau.
+
 ## Questionnaire après chaque sortie
 
 Après chaque sortie de course, l'accueil propose 3 à 5 questions (4 pour un footing, 5 pour une séance de qualité ou une course). Les réponses améliorent directement l'application :

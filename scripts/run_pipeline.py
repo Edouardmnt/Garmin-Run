@@ -8,6 +8,7 @@ Modes :
 - transfer: expérience personnel / global (LifeSnaps) / global + personnel
 - matin   : synchronisation complète, puis envoi de la séance du jour sur la montre
 - evaluation : backtest des prédictions de temps (erreur mesurée, suivie dans MLflow)
+- coach   : évaluation du coach IA sur un jeu de questions types (Ollama lancé ; quelques minutes)
 """
 
 import subprocess
@@ -24,6 +25,7 @@ MODES = {
     "train": [["-m", "ml.train_recovery"]],  # lancé comme module : les modèles maison restent importables
     "transfer": [["-m", "ml.train_transfer"]],
     "evaluation": [["-m", "ml.backtest_predictions"]],
+    "coach": [["-m", "ml.eval_coach"]],
     "matin": [["ingestion/garmin_export.py"], *TRANSFORM, ["-m", "ingestion.garmin_push"]],
 }
 

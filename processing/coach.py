@@ -248,8 +248,8 @@ def detect_distance(question: str) -> dict:
     return {}
 
 
-def run_coach_direct_stream(llm, user_message: str, context: dict, fetchers: dict, history: list[dict] | None = None):
-    """Génère la réponse mot à mot, en un seul appel au modèle. Premier élément : la liste des sujets consultés."""
+def gather_topic_data(user_message: str, fetchers: dict) -> tuple[list[str], dict]:
+    """Sujets de la question et données correspondantes : exactement ce que le modèle lira (et ce qu'on vérifie)."""
     topics = detect_topics(user_message)
     extra = {}
     for topic in topics:
@@ -257,6 +257,12 @@ def run_coach_direct_stream(llm, user_message: str, context: dict, fetchers: dic
             extra[topic] = fetchers[topic](user_message)
         except Exception as exc:  # une donnée indisponible ne doit pas empêcher de répondre
             extra[topic] = {"erreur": str(exc)}
+    return topics, extra
+
+
+def run_coach_direct_stream(llm, user_message: str, context: dict, fetchers: dict, history: list[dict] | None = None):
+    """Génère la réponse mot à mot, en un seul appel au modèle. Premier élément : la liste des sujets consultés."""
+    topics, extra = gather_topic_data(user_message, fetchers)
     data = json.dumps(context, ensure_ascii=False)
     if extra:
         data += "\n\nDONNÉES UTILES : " + json.dumps(extra, ensure_ascii=False, default=str)

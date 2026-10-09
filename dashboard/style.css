@@ -167,6 +167,13 @@ h3 { font-size: 1rem !important; font-weight: 600 !important; }
   border: 1px solid var(--filet); border-radius: 999px; padding: .1rem .65rem; font-size: .78rem; color: var(--gris);
 }
 .vitesse { color: var(--gris); font-size: .78rem; margin-left: .4rem; font-variant-numeric: tabular-nums; }
+/* Vérification des chiffres cités par le coach */
+.verif-ok { color: var(--gris); font-size: .78rem; margin: .35rem 0 0; }
+.verif-ok::before { content: "✓ "; color: #2f7d4f; font-weight: 600; }
+.verif-alerte {
+  font-size: .82rem; margin: .5rem 0 0; padding: .45rem .7rem; border-left: 3px solid #c9822b;
+  background: #fbf4ea; color: #6b4a1f; border-radius: 0 6px 6px 0;
+}
 
 /* Suggestions : pastilles */
 .st-key-suggestions button {

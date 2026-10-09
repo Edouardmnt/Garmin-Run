@@ -105,5 +105,8 @@ def test_commentaire_du_coach_garde_en_cache(data_dir, tmp_path, monkeypatch):
     assert "Réponse de test" in body and "[[MESURES]]" in body
     saved = client.get("/courses/commentaire", params={"activity_id": run_id}).json()
     assert saved["commentaire"].startswith("Réponse de test") and "[[" not in saved["commentaire"]
+    assert {"chiffres_cites", "chiffres_non_verifies", "fiable"} <= saved["verification"].keys()
+    check = client.post("/coach/verification", json={"reponse": "Tu as couru à 2'59/km.", "activity_id": run_id}).json()
+    assert check["chiffres_non_verifies"] == ["2'59"]
     monkeypatch.setenv("RUNLAB_DATA_DIR", str(data_dir))
     importlib.reload(api.main)

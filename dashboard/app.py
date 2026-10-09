@@ -493,20 +493,38 @@ def footnote(meta: dict) -> str:
     return f'<div class="sources">{chips}{speed}</div>'
 
 
-def stream_answer(payload: dict, path: str = "/coach/question/flux") -> dict:
-    """Affiche la réponse au fil de sa rédaction, puis ses sources et sa vitesse."""
+def check_note(check: dict | None) -> str:
+    """Vérification des chiffres de la réponse : étiquette discrète si tout est retrouvé, alerte sinon (HTML)."""
+    if not check:
+        return ""
+    if check.get("chiffres_non_verifies"):
+        figures = ", ".join(check["chiffres_non_verifies"][:6])
+        return (f'<p class="verif-alerte">À vérifier : {esc(figures)}. Ces chiffres ne figurent pas dans tes '
+                "données : le coach les a peut-être calculés, ou inventés.</p>")
+    if check.get("chiffres_cites"):
+        n = check["chiffres_cites"]
+        return f'<p class="verif-ok">{n} chiffre{"s" if n > 1 else ""} vérifié{"s" if n > 1 else ""} dans tes données</p>'
+    return ""
+
+
+def stream_answer(payload: dict, path: str = "/coach/question/flux", verify: dict | None = None) -> dict:
+    """Affiche la réponse au fil de sa rédaction, puis ses sources, sa vitesse et la vérification de ses chiffres."""
     meta = {}
     try:
         text = st.write_stream(visible_text(stream_post(path, payload, meta), meta))
     except (requests.ConnectionError, requests.Timeout) as exc:
         meta["erreur"] = str(exc)
         text = ""
+    text = text if isinstance(text, str) else "".join(text)
+    note = footnote(meta)
     if meta.get("erreur"):
         st.error(f"Le coach n'a pas pu répondre : {meta['erreur']}")
     else:
-        st.markdown(footnote(meta), unsafe_allow_html=True)
-    return {"content": text if isinstance(text, str) else "".join(text), "note": footnote(meta),
-            "erreur": meta.get("erreur")}
+        if verify is not None and text.strip():
+            ok, check = post("/coach/verification", {"reponse": text, **verify})
+            note += check_note(check if ok else None)
+        st.markdown(note, unsafe_allow_html=True)
+    return {"content": text, "note": note, "erreur": meta.get("erreur")}
 
 
 def coach_today() -> None:
@@ -550,7 +568,7 @@ def page_coach() -> None:
     with st.container(key="bilan"):
         if redo:
             st.session_state.pop("bilan", None)
-            answer = stream_answer({"bilan": True})
+            answer = stream_answer({"bilan": True}, verify={"bilan": True})
             if not answer["erreur"]:
                 st.session_state["bilan"] = answer
         elif "bilan" in st.session_state:
@@ -583,8 +601,9 @@ def page_coach() -> None:
         with st.container(key=f"msg_{len(history)}_user"):
             st.markdown(question)
         with st.container(key=f"msg_{len(history) + 1}_assistant"):
-            answer = stream_answer({"question": question,
-                                    "historique": [{"role": m["role"], "content": m["content"]} for m in history]})
+            past = [{"role": m["role"], "content": m["content"]} for m in history]
+            answer = stream_answer({"question": question, "historique": past},
+                                   verify={"question": question, "historique": past})
         if not answer["erreur"]:
             history += [{"role": "user", "content": question},
                         {"role": "assistant", "content": answer["content"], "note": answer["note"]}]
@@ -945,13 +964,14 @@ def coach_comment(activity_id: int) -> None:
                         key=f"avis_{activity_id}")
     with st.container(key="bilan"):  # même mise en forme que le bilan du coach : un article à filet vert
         if ask:
-            answer = stream_answer({"activity_id": activity_id}, "/courses/commentaire/flux")
+            answer = stream_answer({"activity_id": activity_id}, "/courses/commentaire/flux",
+                                   verify={"activity_id": activity_id})
             if not answer["erreur"]:
                 api_get.clear()
         elif saved.get("commentaire"):
             st.markdown(saved["commentaire"])
-            st.markdown(footnote({"sujets": ",".join(saved.get("sujets", [])), "mesures": saved.get("mesures")}),
-                        unsafe_allow_html=True)
+            st.markdown(footnote({"sujets": ",".join(saved.get("sujets", [])), "mesures": saved.get("mesures")})
+                        + check_note(saved.get("verification")), unsafe_allow_html=True)
         else:
             st.markdown('<p class="vide">Le coach lit tout : tes kilomètres, ton dénivelé, tes zones, ta nuit '
                         "précédente, ton ressenti et tes sorties similaires, puis te dit ce qu'il en pense.</p>",

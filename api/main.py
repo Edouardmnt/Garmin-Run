@@ -35,11 +35,13 @@ from processing.coach import (
     answer_direct,
     compact_context,
     detect_distance,
+    gather_topic_data,
     get_llm,
     run_coach,
     run_coach_direct_stream,
     run_commentary_stream,
 )
+from processing.coach_eval import check_answer
 from processing.feedback import (
     apply_feedback_labels,
     efforts_by_activity,
@@ -768,6 +770,25 @@ def question_coach_flux(question: str = Body("", embed=True), historique: list[d
                              headers={"X-Coach-Sujets": ",".join(topics)})
 
 
+@app.post("/coach/verification", tags=["coach"])
+def verification_coach(reponse: str = Body(..., embed=True), question: str = Body("", embed=True),
+                       bilan: bool = Body(False, embed=True), activity_id: int | None = Body(None, embed=True),
+                       historique: list[dict] = Body([], embed=True)) -> dict:
+    """Chiffres de la réponse introuvables dans les données fournies au coach (allures, temps, %, dates...).
+
+    Les données sont reconstruites comme pour la réponse : contexte du jour, plus les données du sujet de la
+    question (ou de la sortie commentée). Les chiffres que tu as écrits toi-même dans la conversation comptent.
+    """
+    question = BILAN_PROMPT if bilan else question
+    data = {"contexte": coach_context()}
+    if activity_id is not None:
+        data["sortie"] = run_context(activity_id)
+    else:
+        data["donnees"] = gather_topic_data(question, coach_fetchers())[1]
+    said = " ".join([question] + [m.get("content", "") for m in historique if m.get("role") == "user"])
+    return check_answer(reponse, data, said)
+
+
 @app.get("/coach/bilan", tags=["coach"])
 def bilan_coach(regenerer: bool = False) -> dict:
     """Bilan de la semaine, rédigé par le coach. Mis en cache pour la journée (un modèle local est lent)."""
@@ -921,8 +942,10 @@ def commentaire_course_flux(activity_id: int = Body(..., embed=True)):
             return
         path = commentary_file(activity_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"commentaire": "".join(parts).strip(), "mesures": stats, "modele": llm.model,
-                                    "sujets": sources}, ensure_ascii=False), encoding="utf-8")
+        text = "".join(parts).strip()
+        check = check_answer(text, {"contexte": context, "sortie": data})
+        path.write_text(json.dumps({"commentaire": text, "mesures": stats, "modele": llm.model, "sujets": sources,
+                                    "verification": check}, ensure_ascii=False), encoding="utf-8")
 
     return StreamingResponse(body(), media_type="text/plain; charset=utf-8",
                              headers={"X-Coach-Sujets": ",".join(sources)})

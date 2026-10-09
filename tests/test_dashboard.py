@@ -127,6 +127,7 @@ def test_coach_repond_a_une_question(app_env):
     assert any("Réponse de test" in m.value for m in at.markdown)  # réponse affichée mot à mot
     note = " ".join(m.value for m in at.markdown)
     assert "Allures" in note and "jetons/s" in note  # données consultées et vitesse mesurée
+    assert "vérifié" in note or "À vérifier" in note  # les chiffres de la réponse ont été vérifiés
     assert len(at.session_state["coach_messages"]) == 2
     next(b for b in at.button if "bilan" in b.label).click().run()
     assert not at.exception and "bilan" in at.session_state
