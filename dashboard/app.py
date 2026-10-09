@@ -756,12 +756,12 @@ def page_predictions() -> None:
     names = {"vo2max_montre": "VO2 max de ta montre", "relation_fc_vitesse": "Relation FC / vitesse sur toutes tes sorties",
              "performances": "Ta meilleure performance"}
     rows = []
-    for key, comp in preds["estimation"].items():
-        if key == "performances":
+    for source, comp in preds["estimation"].items():  # ne pas réutiliser `key` : c'est la distance choisie
+        if source == "performances":
             detail = f"{comp['source']} du {comp['date']} : {comp['distance_km']:g} km en {comp['temps']}"
         else:
             detail = f"{comp['mesures_utilisees']} mesures du {comp['periode']}, calibrage x{comp['calibrage']}"
-        rows.append({"Source": names.get(key, key), "Détail": detail,
+        rows.append({"Source": names.get(source, source), "Détail": detail,
                      "VDOT": comp.get("vdot_estime", comp.get("vdot_deprecie"))})
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
     st.caption("Forme du jour : " + " ".join(preds["explications_ajustement"]))

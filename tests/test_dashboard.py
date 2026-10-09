@@ -173,3 +173,11 @@ def test_analyse_de_sortie(app_env):
     next(b for b in at.button if "avis" in b.label).click().run()  # avis du coach (faux modèle)
     assert not at.exception, at.exception
     assert any("Réponse de test" in m.value for m in at.markdown)
+
+
+def test_predictions_nutrition_sans_erreur(app_env):
+    """La section nutrition de la page Prédictions reçoit bien la distance choisie (et non une autre variable)."""
+    at = open_page("Prédictions")
+    assert not at.exception, at.exception
+    assert not at.warning, [w.value for w in at.warning]  # « Données indisponibles » s'affiche en avertissement
+    assert "Nutrition et hydratation" in [h.value for h in at.header]
