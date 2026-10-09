@@ -162,7 +162,7 @@ def test_tables_lisibles_pendant_qu_elles_sont_reecrites(tmp_path):
     import numpy as np
     import pandas as pd
 
-    from processing.atomic import write_parquet
+    from processing.atomic import read_parquet, write_parquet
 
     path = tmp_path / "gold" / "daily_features.parquet"
     df = pd.DataFrame(np.random.rand(20000, 8), columns=list("abcdefgh"))
@@ -178,7 +178,7 @@ def test_tables_lisibles_pendant_qu_elles_sont_reecrites(tmp_path):
     try:
         for _ in range(200):
             try:
-                assert len(pd.read_parquet(path)) == 20000
+                assert len(read_parquet(path)) == 20000  # comme l'API
             except Exception as exc:  # l'ancienne écriture directe échouait ici (« corrupt file? »)
                 errors.append(exc)
     finally:

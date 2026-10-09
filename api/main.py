@@ -30,6 +30,8 @@ from processing.adjustments import (
     set_status,
 )
 from processing.adjustments import validate as validate_adjustment
+from processing.atomic import read_parquet as atomic_read_parquet
+from processing.atomic import read_with_retry
 from processing.backtest import (
     MIN_PAST_FOR_RECAL,
     RECAL_SOURCES,
@@ -112,13 +114,14 @@ def read_parquet(relative: str) -> pd.DataFrame:
     path = DATA_DIR / relative
     if not path.exists():
         raise HTTPException(503, f"Données indisponibles : {relative}. Le pipeline a-t-il tourné ?")
-    return pd.read_parquet(path)
+    return atomic_read_parquet(path)  # tolère une table en cours de remplacement par la synchronisation
 
 
 def read_labels() -> pd.DataFrame | None:
     """Étiquettes saisies à la main, complétées par le type déclaré dans les questionnaires."""
     path = DATA_DIR / "labels" / "run_labels.csv"
-    labels = pd.read_csv(path, sep=";", decimal=",", dtype={"label": str}) if path.exists() else None
+    labels = (read_with_retry(pd.read_csv, path, sep=";", decimal=",", dtype={"label": str})
+              if path.exists() else None)
     return apply_feedback_labels(labels, load_feedback(DATA_DIR))
 
 

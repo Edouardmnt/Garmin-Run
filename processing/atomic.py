@@ -34,3 +34,20 @@ def write_csv(df, path: Path, **kwargs) -> None:
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     df.to_csv(tmp, **kwargs)
     replace(tmp, path)
+
+
+def read_with_retry(read, path: Path, *args, **kwargs):
+    """Lecture tolérante au remplacement en cours : sous Windows, ouvrir un fichier à l'instant précis où
+    os.replace le remplace donne « Permission denied ». On réessaie quelques fois, très brièvement."""
+    for attempt in range(10):
+        try:
+            return read(path, *args, **kwargs)
+        except PermissionError:
+            time.sleep(0.05 * (attempt + 1))
+    return read(path, *args, **kwargs)
+
+
+def read_parquet(path: Path):
+    import pandas as pd
+
+    return read_with_retry(pd.read_parquet, path)

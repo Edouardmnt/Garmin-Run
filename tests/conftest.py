@@ -16,6 +16,8 @@ SCRIPTS = [
     "scripts/generate_sample_lifesnaps.py",
     "processing/build_silver.py",
     "processing/build_gold.py",
+    # Étiquettes créées d'emblée : avec les tests en parallèle (-n auto), aucun test ne doit compter sur un autre
+    "scripts/make_run_labels.py",
 ]
 
 
