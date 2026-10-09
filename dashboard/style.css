@@ -1,7 +1,7 @@
 /* Foulée : sportif, chic, épuré. Une famille (Archivo), une couleur d'accent (vert anglais). */
 @font-face {
   font-family: "Archivo";
-  src: url("/app/static/Archivo.ttf") format("truetype");
+  src: url("app/static/Archivo.ttf") format("truetype");  /* relatif : marche aussi sous un préfixe (Streamlit Cloud : /~/+/) */
   font-weight: 100 900;
   font-stretch: 62% 125%;
   font-display: swap;
@@ -51,7 +51,8 @@ h3 { font-size: 1rem !important; font-weight: 600 !important; }
 .st-key-page [data-testid="stRadioOption"] {
   padding: .25rem 0 .75rem; margin: 0 !important; border-bottom: 2px solid transparent; cursor: pointer;
 }
-.st-key-page [data-testid="stRadioOption"] > div > div:first-child:not([data-testid]) { display: none !important; }
+/* Cache le rond du bouton radio : le bloc juste avant le texte, quelle que soit l'imbrication selon la version de Streamlit */
+.st-key-page [data-testid="stRadioOption"] div:has(+ [data-testid="stMarkdownContainer"]) { display: none !important; }
 .st-key-page [data-testid="stRadioOption"] p { font-size: .97rem !important; color: var(--gris) !important; font-weight: 500 !important; }
 .st-key-page [data-testid="stRadioOption"][data-selected="true"] { border-bottom-color: var(--encre); }
 .st-key-page [data-testid="stRadioOption"][data-selected="true"] p { color: var(--encre) !important; font-weight: 600 !important; }
