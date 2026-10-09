@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      HF_SPACE: ${{ vars.HF_SPACE || 'Edouardmnt/foulee' }}
+      HF_SPACE: ${{ vars.HF_SPACE || 'edouardmnt04/foulee' }}
     steps:
       - uses: actions/checkout@v4
         if: env.HF_TOKEN != ''

@@ -1,7 +1,7 @@
 # Foulée — coach de course à pied data & IA, de bout en bout
 
 [![CI](https://github.com/Edouardmnt/Garmin-Run/actions/workflows/ci.yml/badge.svg)](https://github.com/Edouardmnt/Garmin-Run/actions/workflows/ci.yml)
-[![Démo en ligne](https://img.shields.io/badge/D%C3%A9mo-Hugging%20Face-ffcc4d?logo=huggingface&logoColor=black)](https://huggingface.co/spaces/Edouardmnt/foulee)
+[![Démo en ligne](https://img.shields.io/badge/D%C3%A9mo-Hugging%20Face-ffcc4d?logo=huggingface&logoColor=black)](https://huggingface.co/spaces/edouardmnt04/foulee)
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 
 Application personnelle construite à partir de **mes propres données de montre Garmin**, de l'ingestion jusqu'au coach IA :
@@ -9,7 +9,7 @@ elle mesure ma charge d'entraînement et ma récupération, prédit mes temps de
 planifie ma préparation, envoie la séance du jour sur ma montre, et répond à mes questions avec un **modèle de langage
 local** dont chaque chiffre est vérifié.
 
-### ▶ [Essayer la démo en ligne](https://huggingface.co/spaces/Edouardmnt/foulee) — rien à installer, données synthétiques d'un coureur fictif
+### ▶ [Essayer la démo en ligne](https://huggingface.co/spaces/edouardmnt04/foulee) — rien à installer, données synthétiques d'un coureur fictif
 
 <p align="center"><a href="docs/images/accueil.png"><img src="docs/images/accueil-apercu.png" width="80%" alt="Accueil : temps prédit sur 10 km, verdict du jour, prochaines séances"></a></p>
 

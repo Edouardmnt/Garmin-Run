@@ -1,7 +1,7 @@
 """Publie la démo sur un Space Hugging Face (SDK Docker).
 
     $env:HF_TOKEN = "hf_..."          # jeton « write » : https://huggingface.co/settings/tokens
-    python deploy/huggingface/push_space.py --space Edouardmnt/foulee
+    python deploy/huggingface/push_space.py --space edouardmnt04/foulee
 
 Copie uniquement le code utile à la démo (jamais data/), place le Dockerfile et la fiche du Space à la racine,
 puis envoie le tout. Le workflow GitHub .github/workflows/space.yml fait la même chose à chaque push sur main.
@@ -34,7 +34,8 @@ def stage(target: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--space", required=True, help="identifiant du Space, ex. Edouardmnt/foulee")
+    parser.add_argument("--space", default=os.getenv("HF_SPACE", "edouardmnt04/foulee"),
+                        help="identifiant du Space : ton-identifiant-hugging-face/nom (edouardmnt04/foulee par défaut)")
     parser.add_argument("--dry-run", action="store_true", help="prépare le dossier sans rien envoyer")
     args = parser.parse_args()
 
