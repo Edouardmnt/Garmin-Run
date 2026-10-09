@@ -1,0 +1,10 @@
+# Démo en ligne sur Streamlit Community Cloud : pas de Garmin, pas d'Ollama, pas de MLflow
+# (mêmes dépendances que requirements-demo.txt ; Community Cloud lit ce fichier, voisin de streamlit_app.py)
+pandas
+pyarrow
+scikit-learn
+fastapi
+httpx
+streamlit
+plotly
+requests
