@@ -90,6 +90,7 @@ docker run --rm -v "$(pwd)/data:/data" garmin-run process  # vos données brutes
 | `train` | entraînement et évaluation du modèle de récupération |
 | `transfer` | expérience de transfert avec LifeSnaps (si le fichier est présent dans le volume) |
 | `matin` | `sync`, puis envoi de la séance du jour sur la montre |
+| `evaluation` | backtest des prédictions de temps, suivi dans MLflow |
 
 Le mode `sync` lit sa configuration dans des variables d'environnement (`GARMIN_DAYS`, `GARMINTOKENS`, `GARMIN_EMAIL`, `GARMIN_PASSWORD`) : aucun identifiant n'est inclus dans l'image. La synchronisation est **incrémentale** : elle repart du dernier jour déjà téléchargé (*watermark*) et récupère tous les jours manquants, que la dernière exécution date d'hier ou de plusieurs semaines. Les activités sont fusionnées avec l'historique, sans doublon.
 
@@ -239,6 +240,18 @@ L'export utilise la bibliothèque non officielle [python-garminconnect](https://
 | `GET /planning/actif` | Planning de l'objectif actif ; les séances passées de la semaine restent visibles, marquées réalisées ou non |
 | `GET /montre/seance-du-jour`, `POST /montre/envoyer` | Séance du jour au format Garmin, et envoi au calendrier |
 
+## Qualité des prédictions : backtest
+
+`processing/backtest.py` mesure si les prédictions de temps auraient été justes. Pour chaque performance réelle (course, meilleur 5 ou 10 km d'une séance dure), le niveau est estimé **la veille**, avec les seules données antérieures (VO2 max, relation FC/vitesse, performances, charge, questionnaires), puis comparé au chrono réel. Un test vérifie qu'aucune donnée du jour même ou postérieure ne fuit dans la prédiction : il échoue si l'on en introduit une.
+
+Six méthodes sont comparées : la prédiction affichée, la même sans la correction des questionnaires (pour mesurer son apport), chaque source d'estimation seule, et une référence naïve (formule de Riegel sur la dernière performance). Indicateurs : erreur moyenne en %, biais (prédictions trop optimistes ou trop prudentes), part des prédictions à ±3 %.
+
+```bash
+python scripts/run_pipeline.py evaluation   # tableau des méthodes, CSV dans data/evaluation, suivi MLflow
+```
+
+Chaque exécution est enregistrée dans l'expérience MLflow `prediction-backtest`, avec le commit du code : on suit la qualité des prédictions au fil des versions. La page Prédictions affiche la fiabilité mesurée (`GET /qualite/predictions`) juste sous les temps prédits.
+
 ## Questionnaire après chaque sortie
 
 Après chaque sortie de course, l'accueil propose 3 à 5 questions (4 pour un footing, 5 pour une séance de qualité ou une course). Les réponses améliorent directement l'application :
@@ -379,6 +392,7 @@ Les données de santé et de localisation ne quittent jamais la machine locale :
 │   ├── feedback.py              # questionnaire après sortie et exploitation des réponses
 │   ├── nutrition.py             # nutrition et hydratation de course
 │   ├── run_analysis.py          # analyse d'une sortie : régularité, dérive cardiaque, zones, efficacité
+│   ├── backtest.py              # backtest des prédictions : estimées la veille, comparées au chrono réel
 │   ├── goals.py                 # objectifs de course
 │   ├── coach.py                 # coach IA : modèle local Ollama, outils, garde-fous
 │   ├── watch.py                 # conversion des séances en entraînements Garmin, envoi sans doublon

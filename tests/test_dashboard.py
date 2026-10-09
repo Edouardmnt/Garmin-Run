@@ -181,3 +181,4 @@ def test_predictions_nutrition_sans_erreur(app_env):
     assert not at.exception, at.exception
     assert not at.warning, [w.value for w in at.warning]  # « Données indisponibles » s'affiche en avertissement
     assert "Nutrition et hydratation" in [h.value for h in at.header]
+    assert "Fiabilité de ces prédictions" in [h.value for h in at.header]

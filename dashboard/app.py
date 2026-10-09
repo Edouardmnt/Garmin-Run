@@ -725,6 +725,83 @@ def page_planning() -> None:
 
 # --- Prédictions ---------------------------------------------------------------------------------
 
+METHOD_NAMES = {"application": "Foulée (affiché)", "sans_correction": "Sans correction des questionnaires",
+                "vo2max_montre": "VO2 max de la montre", "relation_fc_vitesse": "Relation FC / vitesse",
+                "performances": "Performances seules", "riegel_derniere": "Riegel, dernière performance"}
+
+
+def pct(value: float, sign: bool = False) -> str:
+    """Pourcentage au format français : 3,4 ou +3,4."""
+    return (f"{value:+.1f}" if sign else f"{value:.1f}").replace(".", ",")
+
+
+def prediction_quality() -> None:
+    """Fiabilité mesurée : ce que Foulée aurait prédit la veille de chaque performance réelle."""
+    data = get("/qualite/predictions")
+    st.header("Fiabilité de ces prédictions")
+    if not data or not data["n"]:
+        st.markdown('<p class="vide">Pas encore assez de performances pour mesurer la fiabilité.</p>',
+                    unsafe_allow_html=True)
+        return
+    app_score = data["methodes"]["application"]
+    bias = app_score["biais_pct"]
+    if bias < -1:
+        trend = "plutôt trop rapides (optimistes)"
+    elif bias > 1:
+        trend = "plutôt trop lentes (prudentes)"
+    else:
+        trend = "sans biais net"
+    cols = st.columns(4)
+    cols[0].metric("Erreur moyenne", f"{pct(app_score['mape_pct'])} %")
+    cols[1].metric("Écart médian", f"{app_score['erreur_mediane_s'] // 60}'{app_score['erreur_mediane_s'] % 60:02d}\"")
+    cols[2].metric("À ±3 % près", f"{app_score['part_a_3pct']} %")
+    cols[3].metric("Performances testées", data["n"])
+
+    pts = data["points"]
+    fig = go.Figure()
+    lo = min(min(p["reel_s"], p["predit_s"]) for p in pts) / 60 * 0.95
+    hi = max(max(p["reel_s"], p["predit_s"]) for p in pts) / 60 * 1.05
+    fig.add_scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(color=FILET, width=1.5), showlegend=False,
+                    hoverinfo="skip")
+    for source in dict.fromkeys(p["source"] for p in pts):
+        group = [p for p in pts if p["source"] == source]
+        fig.add_scatter(x=[p["reel_s"] / 60 for p in group], y=[p["predit_s"] / 60 for p in group], mode="markers",
+                        name=source.capitalize(), marker=dict(size=9, color=ENCRE if source == "course" else ACCENT,
+                                                              opacity=1 if source == "course" else .55),
+                        text=[f"{p['date']} : {p['distance_km']:g} km, réel {p['reel']}, prédit {p['predit']} "
+                              f"({pct(p['erreur_pct'], sign=True)} %)" for p in group], hovertemplate="%{text}<extra></extra>")
+    fig.update_layout(xaxis_title="Temps réel (min)", yaxis_title="Temps prédit la veille (min)", hovermode="closest")
+    fig.update_xaxes(tickformat=None)
+    figure(fig, 320)
+
+    ranking = sorted(data["methodes"].items(), key=lambda x: x[1]["mape_pct"])
+    points = [f"Sur {data['n']} performances, Foulée se trompe en moyenne de {pct(app_score['mape_pct'])} %, "
+              f"et ses prédictions sont {trend} ({pct(bias, sign=True)} %)."]
+    best = ranking[0]
+    if best[0] != "application":
+        points.append(f"La méthode la plus juste sur ton historique est « {METHOD_NAMES[best[0]]} » "
+                      f"({pct(best[1]['mape_pct'])} % d'erreur) : une piste pour mieux pondérer les estimations.")
+    no_corr = data["methodes"].get("sans_correction")
+    if no_corr and data["questionnaires"]["reponses"]:
+        gain = no_corr["mape_pct"] - app_score["mape_pct"]
+        points.append(f"La correction tirée de tes questionnaires {'réduit' if gain > 0 else 'ne réduit pas'} l'erreur "
+                      f"({pct(no_corr['mape_pct'])} % sans, {pct(app_score['mape_pct'])} % avec).")
+    riegel = data["methodes"].get("riegel_derniere")
+    if riegel:
+        better = app_score["mape_pct"] < riegel["mape_pct"]
+        points.append(f"Face à la référence naïve (formule de Riegel sur ta dernière performance, "
+                      f"{pct(riegel['mape_pct'])} %), Foulée fait {'mieux' if better else 'moins bien'}.")
+    explain("Chaque point est une performance réelle : en abscisse ton chrono, en ordonnée le temps que Foulée aurait "
+            "prédit la veille, avec les seules données connues à ce moment-là. Sur la diagonale, la prédiction est "
+            "parfaite ; au-dessus, elle était trop lente ; en dessous, trop rapide. Les points noirs sont tes courses, "
+            "les verts les meilleurs 5 et 10 km de tes séances dures, souvent courus sans être à fond.",
+            {"points": points})
+    with st.expander("Comparer toutes les méthodes"):
+        st.dataframe(pd.DataFrame([{"Méthode": METHOD_NAMES[m], "Erreur moyenne (%)": s["mape_pct"],
+                                    "Biais (%)": s["biais_pct"], "À ±3 % (%)": s["part_a_3pct"], "n": s["n"]}
+                                   for m, s in ranking]), hide_index=True, width="stretch")
+
+
 def page_predictions() -> None:
     st.title("Mes prédictions")
     c1, c2, c3 = st.columns([3, 3, 2])
@@ -749,6 +826,8 @@ def page_predictions() -> None:
     if preds["avertissements"]:
         st.markdown('<div class="lecture" style="margin-top:1.4rem"><h4>À savoir</h4><p>'
                     + "<br>".join(esc(w) for w in preds["avertissements"]) + "</p></div>", unsafe_allow_html=True)
+
+    prediction_quality()
 
     st.header("Comment ce temps est calculé")
     st.markdown(f"Ton niveau est résumé par un **VDOT de {preds['vdot']}**, la moyenne des estimations suivantes. "

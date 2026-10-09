@@ -19,6 +19,7 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from api.sync import SyncManager
+from processing.backtest import backtest, by_source, metrics, questionnaire_agreement
 from processing.coach import (
     BILAN_PROMPT,
     COACH_MODE,
@@ -885,4 +886,23 @@ def commentaire_course_flux(activity_id: int = Body(..., embed=True)):
 
     return StreamingResponse(body(), media_type="text/plain; charset=utf-8",
                              headers={"X-Coach-Sujets": ",".join(sources)})
+
+
+# --- Qualité des prédictions ----------------------------------------------------------------------
+
+@app.get("/qualite/predictions", tags=["qualite"])
+def qualite_predictions() -> dict:
+    """Backtest : pour chaque performance réelle, le temps qu'on aurait prédit la veille, et l'erreur."""
+    gold, perf, physio = estimation_inputs()
+    feedback = load_feedback(DATA_DIR)
+    results = backtest(perf, physio, chronic_load(gold), feedback)
+    if results.empty:
+        return {"n": 0, "methodes": {}, "points": [], "par_source": {}, "questionnaires": questionnaire_agreement(feedback)}
+    points = [{"date": r.date.strftime("%Y-%m-%d"), "source": r.source, "distance_km": round(r.distance_m / 1000, 2),
+               "reel": format_time(r.temps_reel_s), "predit": format_time(r.application),
+               "reel_s": round(r.temps_reel_s), "predit_s": round(r.application),
+               "erreur_pct": round((r.application - r.temps_reel_s) / r.temps_reel_s * 100, 1)}
+              for r in results.itertuples()]
+    return {"n": len(results), "methodes": metrics(results), "par_source": by_source(results), "points": points,
+            "questionnaires": questionnaire_agreement(feedback)}
 
