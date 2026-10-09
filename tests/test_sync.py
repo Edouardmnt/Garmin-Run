@@ -106,3 +106,50 @@ def test_statut_illisible_ne_plante_pas(tmp_path):
     manager.dir.mkdir(parents=True)
     manager.status_file.write_text("", encoding="utf-8")  # fichier vide, comme en pleine écriture
     assert manager.status()["en_cours"] is False
+
+
+def test_verrou_rafraichi_pendant_une_etape_longue(sync_client, monkeypatch):
+    """Une étape plus longue que STALE_LOCK_S n'est pas prise pour une synchronisation abandonnée."""
+    import api.sync
+
+    client, main = sync_client
+    monkeypatch.setattr(api.sync, "HEARTBEAT_S", 0.2)
+    monkeypatch.setattr(api.sync, "STALE_LOCK_S", 1)
+    monkeypatch.setattr(api.sync, "steps", lambda: [("Étape longue", ["-c", "import time; time.sleep(2.5)"])])
+    client.post("/sync")
+    time.sleep(2)
+    status = client.get("/sync/statut").json()
+    assert status["en_cours"] and status["etape"] == "Étape longue" and status["depuis_s"] >= 1
+    main.SYNC.wait()
+    assert client.get("/sync/statut").json()["en_cours"] is False
+
+
+def test_synchro_interrompue_par_un_redemarrage_ne_bloque_pas(sync_client, monkeypatch):
+    """Pod redémarré en pleine synchro : le verrou n'est plus rafraîchi, la synchro suivante peut partir."""
+    import os
+
+    import api.sync
+
+    client, main = sync_client
+    lock = main.DATA_DIR / "sync" / "verrou"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("synchro de l'ancien Pod")
+    old = time.time() - api.sync.STALE_LOCK_S - 5  # une minute sans rafraîchissement suffit
+    os.utime(lock, (old, old))
+    assert client.get("/sync/statut").json()["en_cours"] is False
+    assert client.post("/sync").json()["lancee"] is True
+    main.SYNC.wait()
+
+
+def test_etape_bloquee_interrompue(sync_client, monkeypatch):
+    import api.sync
+
+    client, main = sync_client
+    monkeypatch.setattr(api.sync, "HEARTBEAT_S", 0.2)
+    monkeypatch.setattr(api.sync, "STEP_TIMEOUT_S", 1)
+    monkeypatch.setattr(api.sync, "steps", lambda: [("Récupération de tes données Garmin",
+                                                      ["-c", "import time; time.sleep(30)"])])
+    client.post("/sync")
+    main.SYNC.wait(15)
+    status = client.get("/sync/statut").json()
+    assert not status["en_cours"] and "interrompue" in status["erreur"]

@@ -18,6 +18,7 @@ import streamlit as st
 API_URL = os.getenv("RUNLAB_API_URL", "http://127.0.0.1:8000")
 AUTO_SYNC = os.getenv("RUNLAB_AUTO_SYNC", "1") == "1"  # synchronisation à l'ouverture si les données ont vieilli
 AUTO_SYNC_AFTER_MIN = 30
+SLOW_SYNC_S = 90  # au-delà, on explique que l'attente vient de Garmin
 DISTANCES = {"5 km": "5k", "10 km": "10k", "Semi": "semi", "Marathon": "marathon"}
 DAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 
@@ -1116,8 +1117,14 @@ def sync_status_line() -> None:
         return
     if status.get("en_cours"):
         st.session_state["synchro_suivie"] = True
+        step = status.get("etape") or "Finalisation"
+        elapsed = status.get("depuis_s")
+        clock = "" if elapsed is None else f" · {elapsed // 60} min {elapsed % 60:02d} s" if elapsed >= 60 else f" · {elapsed} s"
         st.progress(max(float(status.get("progression") or 0), 0.03),
-                    text=f"Mise à jour : {(status.get('etape') or 'finalisation').lower()}…")
+                    text=f"Mise à jour : {step[0].lower()}{step[1:]}…{clock}")
+        if elapsed is not None and elapsed > SLOW_SYNC_S:
+            st.caption("Garmin répond lentement aujourd'hui. Tu peux utiliser Foulée en attendant : "
+                       "la page se mettra à jour toute seule à la fin.")
         return
     if st.session_state.pop("synchro_suivie", False):  # elle vient de se terminer
         api_get.clear()

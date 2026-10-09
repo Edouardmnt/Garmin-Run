@@ -17,7 +17,12 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-STALE_LOCK_S = 15 * 60  # un verrou plus ancien vient d'une synchronisation interrompue : on l'ignore
+# Le verrou est « rafraîchi » toutes les HEARTBEAT_S secondes tant que la synchronisation tourne vraiment.
+# Si le Pod est redémarré en pleine synchronisation (mise à jour de l'image, rollout), plus personne ne le
+# rafraîchit : au bout de STALE_LOCK_S, il est considéré comme abandonné et une nouvelle synchro peut partir.
+HEARTBEAT_S = 5
+STALE_LOCK_S = 60
+STEP_TIMEOUT_S = 10 * 60  # une étape bloquée (Garmin qui ne répond plus) est interrompue
 
 
 def steps() -> list[tuple[str, list[str]]]:
@@ -41,6 +46,7 @@ class SyncManager:
         self.lock = self.dir / "verrou"
         self.status_file = self.dir / "statut.json"
         self._thread: threading.Thread | None = None
+        self._started = time.time()
 
     # --- État -------------------------------------------------------------------------------------
     def last_sync(self) -> datetime | None:
@@ -57,10 +63,18 @@ class SyncManager:
             "en_cours": self.running(),
             "etape": saved.get("etape") if self.running() else None,
             "progression": saved.get("progression", 0.0) if self.running() else 1.0,
+            "depuis_s": self._elapsed_s(saved) if self.running() else None,
             "erreur": saved.get("erreur"),
             "derniere_synchro": None if last is None else last.isoformat(timespec="seconds"),
             "age_min": None if last is None else round((datetime.now() - last).total_seconds() / 60),
         }
+
+    @staticmethod
+    def _elapsed_s(saved: dict) -> int | None:
+        try:
+            return max(0, round(time.time() - float(saved["debut"])))
+        except (KeyError, TypeError, ValueError):
+            return None
 
     def _read_status(self) -> dict:
         """Lecture tolérante : un fichier illisible donne un état vide, jamais une erreur."""
@@ -103,7 +117,8 @@ class SyncManager:
                 return {**self.status(), "lancee": False, "raison": "deja_en_cours"}
             self.lock.write_text(datetime.now().isoformat(), encoding="utf-8")  # verrou périmé : on le reprend
         plan = steps()
-        self._save(etape=plan[0][0], progression=0.0, erreur=None)
+        self._started = time.time()
+        self._save(etape=plan[0][0], progression=0.0, erreur=None, debut=self._started)
         self._thread = threading.Thread(target=self._run, args=(plan,), daemon=True)
         self._thread.start()
         return {**self.status(), "lancee": True}
@@ -113,19 +128,37 @@ class SyncManager:
         error = None
         try:
             for i, (label, args) in enumerate(plan):
-                self._save(etape=label, progression=round(i / len(plan), 2), erreur=None)
-                self.lock.touch()  # le verrou reste « frais » tant que la synchronisation avance
-                result = subprocess.run([sys.executable, *args], cwd=ROOT, env=env, capture_output=True, text=True,
-                                        stdin=subprocess.DEVNULL, timeout=600)
-                if result.returncode != 0:
-                    tail = (result.stderr or result.stdout).strip().splitlines()[-1:] or ["erreur inconnue"]
+                self._save(etape=label, progression=round(i / len(plan), 2), erreur=None, debut=self._started)
+                code, output = self._run_step(args, env)
+                if code is None:
+                    error = f"{label} : interrompue après {STEP_TIMEOUT_S // 60} min sans réponse."
+                    break
+                if code != 0:
+                    tail = output.strip().splitlines()[-1:] or ["erreur inconnue"]
                     error = f"{label} : {tail[0][:200]}"
                     break
-        except subprocess.TimeoutExpired:
-            error = "La synchronisation a pris trop de temps."
         finally:
             self._save(etape=None, progression=1.0, erreur=error)
             self.lock.unlink(missing_ok=True)
+
+    def _run_step(self, args: list[str], env: dict) -> tuple[int | None, str]:
+        """Lance une étape en rafraîchissant le verrou pendant qu'elle tourne ; None si elle a dépassé le délai."""
+        log = self.dir / "etape.log"  # sortie de l'étape en cours : utile pour comprendre un blocage
+        with open(log, "w", encoding="utf-8", errors="replace") as out:
+            proc = subprocess.Popen([sys.executable, *args], cwd=ROOT, env=env, stdout=out, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, text=True)
+            start = time.time()
+            while proc.poll() is None:
+                self.lock.touch()
+                if time.time() - start > STEP_TIMEOUT_S:
+                    proc.kill()
+                    proc.wait()
+                    return None, ""
+                try:
+                    proc.wait(timeout=HEARTBEAT_S)
+                except subprocess.TimeoutExpired:
+                    pass
+        return proc.returncode, log.read_text(encoding="utf-8", errors="replace")
 
     def wait(self, timeout_s: float = 120) -> None:
         """Attend la fin de la synchronisation lancée par ce processus (utile aux tests)."""
