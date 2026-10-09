@@ -153,3 +153,36 @@ def test_etape_bloquee_interrompue(sync_client, monkeypatch):
     main.SYNC.wait(15)
     status = client.get("/sync/statut").json()
     assert not status["en_cours"] and "interrompue" in status["erreur"]
+
+
+def test_tables_lisibles_pendant_qu_elles_sont_reecrites(tmp_path):
+    """La synchronisation réécrit les parquets pendant que l'API les lit : jamais de fichier à moitié écrit."""
+    import threading
+
+    import numpy as np
+    import pandas as pd
+
+    from processing.atomic import write_parquet
+
+    path = tmp_path / "gold" / "daily_features.parquet"
+    df = pd.DataFrame(np.random.rand(20000, 8), columns=list("abcdefgh"))
+    write_parquet(df, path)
+    stop, errors = threading.Event(), []
+
+    def writer():
+        while not stop.is_set():
+            write_parquet(df, path)
+
+    thread = threading.Thread(target=writer)
+    thread.start()
+    try:
+        for _ in range(200):
+            try:
+                assert len(pd.read_parquet(path)) == 20000
+            except Exception as exc:  # l'ancienne écriture directe échouait ici (« corrupt file? »)
+                errors.append(exc)
+    finally:
+        stop.set()
+        thread.join()
+    assert not errors, errors[:1]
+    assert not list(path.parent.glob(".*.tmp"))  # aucun fichier temporaire laissé derrière

@@ -6,9 +6,13 @@ Sortie  : data/gold/daily_features.parquet
 
 import math
 import os
+import sys
 from pathlib import Path
 
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # lancé comme script : la racine du dépôt
+from processing.atomic import write_parquet  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 # Dossier de données : data/ par défaut, data/sample/ pour la démo
@@ -78,7 +82,7 @@ def main() -> None:
     df["next_night_suspect"] = df["night_suspect"].shift(-1, fill_value=False)
 
     GOLD_DIR.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(GOLD_DIR / "daily_features.parquet", index=False)
+    write_parquet(df, GOLD_DIR / "daily_features.parquet")
 
     # Résumé
     print(f"\n{len(act)} séances avec FC, {len(df)} jours")

@@ -9,9 +9,13 @@ Relancer le script ajoute les nouvelles sorties sans jamais effacer les étiquet
 
 import json
 import os
+import sys
 from pathlib import Path
 
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # lancé comme script : la racine du dépôt
+from processing.atomic import write_csv  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.getenv("RUNLAB_DATA_DIR", ROOT / "data"))
@@ -82,7 +86,7 @@ def main() -> None:
     runs = runs.sort_values("date").reset_index(drop=True)
     OUT.parent.mkdir(parents=True, exist_ok=True)
     # Format adapté à Excel en français : séparateur ";", virgule décimale, accents corrects (utf-8-sig)
-    runs.to_csv(OUT, index=False, sep=";", decimal=",", encoding="utf-8-sig")
+    write_csv(runs, OUT, index=False, sep=";", decimal=",", encoding="utf-8-sig")
 
     print(runs[["date", "distance_km", "pace_min_km", "avg_hr", "z4_z5", "has_intervals", "suggestion", "label"]].to_string())
     print(f"\nSuggestions : {runs['suggestion'].value_counts().to_dict()}")

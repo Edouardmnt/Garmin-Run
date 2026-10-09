@@ -10,9 +10,13 @@ Le script ne modifie jamais data/raw : on peut le relancer à volonté.
 
 import json
 import os
+import sys
 from pathlib import Path
 
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # lancé comme script : la racine du dépôt
+from processing.atomic import write_parquet  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 # Dossier de données : data/ par défaut, data/sample/ pour la démo
@@ -173,17 +177,17 @@ def main() -> None:
     SILVER_DIR.mkdir(parents=True, exist_ok=True)
 
     activities = build_activities()
-    activities.to_parquet(SILVER_DIR / "activities.parquet", index=False)
+    write_parquet(activities, SILVER_DIR / "activities.parquet")
     quality_report("activities", activities)
     print("\nActivités par sport :")
     print(activities["sport"].value_counts().to_string())
 
     splits = build_splits()
-    splits.to_parquet(SILVER_DIR / "splits.parquet", index=False)
+    write_parquet(splits, SILVER_DIR / "splits.parquet")
     print(f"\nTours au km : {len(splits)} tours, {splits['activity_id'].nunique()} sorties")
 
     daily = build_daily()
-    daily.to_parquet(SILVER_DIR / "daily.parquet", index=False)
+    write_parquet(daily, SILVER_DIR / "daily.parquet")
     quality_report("daily", daily)
 
     print(f"\nTables écrites dans {SILVER_DIR}")
