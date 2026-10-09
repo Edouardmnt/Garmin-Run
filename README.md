@@ -534,7 +534,7 @@ pytest -v        # tests unitaires et test de bout en bout du pipeline
 ├── docs/images/                 # captures du tableau de bord (démo)
 ├── ops/windows/                 # démarrage automatique du cluster et accès local
 ├── tests/                       # tests unitaires et de bout en bout (pytest)
-├── .github/workflows/           # intégration continue (ci.yml) et publication manuelle sur Hugging Face (space.yml)
+├── .github/workflows/           # intégration continue (ci.yml)
 ├── Dockerfile                   # image du pipeline
 ├── .dockerignore
 ├── pyproject.toml               # configuration pytest et ruff
@@ -586,7 +586,7 @@ pytest -v        # tests unitaires et test de bout en bout du pipeline
 
 La démo est hébergée gratuitement sur **Streamlit Community Cloud**, branchée sur ce dépôt : elle se redéploie à chaque push sur `main`. Son fichier principal, `dashboard/streamlit_app.py`, fixe l'environnement de démo (données synthétiques, API dans le même processus, coach par règles), génère les données une seule fois par conteneur (bronze → silver → gold), puis exécute le tableau de bord. Les dépendances viennent de `dashboard/requirements.txt`, sans Garmin, Ollama ni MLflow ; `data/` n'est jamais publié.
 
-Une variante Docker existe pour Hugging Face Spaces (`deploy/huggingface/`, workflow `space.yml` à lancer à la main) : les Spaces Docker demandent désormais l'offre PRO.
+Une variante Docker existe pour Hugging Face Spaces (`deploy/huggingface/`, publication avec `push_space.py`) : les Spaces Docker demandent désormais l'offre PRO.
 
 ---
 
