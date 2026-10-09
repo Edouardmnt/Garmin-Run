@@ -150,10 +150,11 @@ def sessions_table(sessions: list[dict]) -> None:
             done = s.get("realisee")
             detail = ("Réalisée" if done else "Non réalisée" if done is False else "Passée") + (f"<br>{detail}" if detail else "")
         row_class = ' class="passee"' if s.get("passee") else ""
+        badge = '<span class="modifiee">Modifiée avec ton coach</span>' if s.get("ajustement") else ""
         rows.append(f"""<tr{row_class}><td class="jour"><b>{esc(s['jour'])}</b><span>{when}</span></td>
             <td class="type"><i style="background:{color}"></i>{esc(TYPE_NAMES.get(s['type'], s['type']))}</td>
             <td><div class="titre">{esc(s['titre'])}</div><div class="description">{esc(s['description'])}</div>
-            <div class="objectif">{esc(s['objectif'])}</div></td>
+            <div class="objectif">{esc(s['objectif'])}</div>{badge}</td>
             <td class="chiffres">{esc(figures)}<span>{detail}</span></td></tr>""")
     st.markdown(f'<table class="carnet">{"".join(rows)}</table>', unsafe_allow_html=True)
 
@@ -435,7 +436,7 @@ def page_nights() -> None:
 # --- Coach ---------------------------------------------------------------------------------------
 
 SUGGESTIONS = ["Je peux faire mon fractionné ce soir ?", "Quelle allure pour mon prochain footing ?",
-               "Que manger avant ma prochaine course ?"]
+               "Je suis fatigué, allège ma prochaine séance", "Que manger avant ma prochaine course ?"]
 
 
 def stream_post(path: str, payload: dict, meta: dict):
@@ -474,11 +475,18 @@ def visible_text(chunks, meta: dict):
             meta["mesures"] = json.loads(line.removeprefix("[[MESURES]]").strip())
         elif line.startswith("[[ERREUR]]"):
             meta["erreur"] = line.removeprefix("[[ERREUR]]").strip()
+        elif line.startswith("[[PROPOSITION]]"):
+            meta["proposition"] = json.loads(line.removeprefix("[[PROPOSITION]]").strip())
+        elif line.startswith("[[PROPOSITION_REFUSEE]]"):
+            meta["proposition_refusee"] = line.removeprefix("[[PROPOSITION_REFUSEE]]").strip()
+        elif line.startswith("[[EXERCICES]]"):
+            meta["exercices"] = json.loads(line.removeprefix("[[EXERCICES]]").strip())
 
 
 TOPIC_NAMES = {"allures": "Allures", "predictions": "Prédictions", "nutrition": "Nutrition", "seances": "Séances",
                "planning": "Planning", "sortie": "Sortie", "kilometres": "Kilomètres", "zones": "Zones cardiaques",
-               "nuit": "Nuit précédente", "ressenti": "Ton ressenti", "sorties similaires": "Sorties similaires"}
+               "nuit": "Nuit précédente", "ressenti": "Ton ressenti", "sorties similaires": "Sorties similaires",
+               "douleur": "Douleur et exercices"}
 
 
 def footnote(meta: dict) -> str:
@@ -524,7 +532,90 @@ def stream_answer(payload: dict, path: str = "/coach/question/flux", verify: dic
             ok, check = post("/coach/verification", {"reponse": text, **verify})
             note += check_note(check if ok else None)
         st.markdown(note, unsafe_allow_html=True)
-    return {"content": text, "note": note, "erreur": meta.get("erreur")}
+        coach_extras(meta)
+    return {"content": text, "note": note, "erreur": meta.get("erreur"), "proposition": meta.get("proposition"),
+            "proposition_refusee": meta.get("proposition_refusee"), "exercices": meta.get("exercices")}
+
+
+def coach_extras(message: dict) -> None:
+    """Sous une réponse : exercices pour une douleur, proposition de modification du planning."""
+    if message.get("exercices"):
+        exercises_card(message["exercices"])
+    if message.get("proposition"):
+        proposal_card(message["proposition"])
+    elif message.get("proposition_refusee"):
+        st.markdown(f'<p class="verif-alerte">Le coach a proposé une modification impossible : '
+                    f'{esc(message["proposition_refusee"])} Reformule ta demande.</p>', unsafe_allow_html=True)
+
+
+def fresh_get(path: str) -> dict:
+    """Lecture sans cache (état qui change au clic)."""
+    try:
+        if API_URL == "inprocess":
+            return inprocess_client().get(path).json()
+        return requests.get(f"{API_URL}{path}", timeout=10).json()
+    except (requests.ConnectionError, requests.Timeout, ValueError):
+        return {}
+
+
+def session_line(s: dict | None) -> str:
+    if not s:
+        return "<b>Repos</b><small>Séance retirée du planning</small>"
+    when = date.fromisoformat(s["date"]).strftime("%d/%m")
+    km = f"{s['distance_km']:g} km".replace(".", ",")
+    return f"<b>{esc(s['titre'])}</b><small>{esc(s['jour'])} {when} · {km} · {esc(s.get('allure') or '')}</small>"
+
+
+def proposal_card(adj: dict) -> None:
+    """Avant / après, risques signalés, et les boutons : rien ne change sans ta validation."""
+    statuses = {a["id"]: a["statut"] for a in fresh_get("/planning/ajustements").get("ajustements", [])}
+    status = statuses.get(adj["id"], adj["statut"])
+    alerts = "".join(f"<li>{esc(w)}</li>" for w in adj.get("avertissements", []))
+    reason = f'<p class="prop-raison">{esc(adj["raison"])}</p>' if adj.get("raison") else ""
+    st.markdown(f"""<div class="proposition"><div class="prop-tete">Proposition du coach</div>
+        <p class="prop-libelle">{esc(adj["libelle"])}</p>{reason}
+        <div class="prop-avant-apres"><div><span>Avant</span>{session_line(adj["avant"])}</div>
+        <div class="prop-fleche">→</div><div><span>Après</span>{session_line(adj["apres"])}</div></div>
+        {f'<ul class="prop-alertes">{alerts}</ul>' if alerts else ''}</div>""", unsafe_allow_html=True)
+    if status == "propose":
+        with st.container(key=f"prop_{adj['id']}", horizontal=True):
+            if st.button("Valider", key=f"valider_{adj['id']}", type="primary"):
+                ok, answer = post(f"/planning/ajustements/{adj['id']}/valider", {})
+                if ok:
+                    api_get.clear()
+                    watch = (answer.get("montre") or {}).get("message")
+                    st.session_state["toast"] = answer["message"] + (f" {watch}" if watch else "")
+                else:
+                    st.session_state["toast"] = answer.get("detail", "Validation impossible.")
+                st.rerun()
+            if st.button("Refuser", key=f"refuser_{adj['id']}"):
+                post(f"/planning/ajustements/{adj['id']}/refuser", {})
+                st.rerun()
+    else:
+        labels = {"accepte": "Validée : ton planning est à jour.", "refuse": "Refusée : le planning ne change pas.",
+                  "annule": "Validée puis annulée depuis le planning."}
+        st.markdown(f'<p class="prop-statut prop-{status}">{labels.get(status, status)}</p>', unsafe_allow_html=True)
+
+
+def exercises_card(data: dict) -> None:
+    """Exercices issus d'une base fixe (pas générés par le modèle), signaux d'alerte, et rappel de consulter."""
+    if data.get("zones"):
+        for zone in data["zones"]:
+            items = "".join(f'<li><b>{esc(e["nom"])}</b> <span class="dosage">{esc(e["dosage"])}</span>'
+                            f'<br><small>{esc(e["consigne"])}</small></li>' for e in zone["exercices"])
+            st.markdown(f"""<div class="exercices"><div class="prop-tete">Exercices souvent proposés en kiné :
+                {esc(zone["nom"].lower())}</div><ol>{items}</ol>
+                <p><b>Côté course.</b> {esc(zone["course"])}</p>
+                <p><b>À qui t'adresser.</b> {esc(zone["specialiste"][0].upper() + zone["specialiste"][1:])}.</p></div>""",
+                        unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="exercices"><p>Précise où tu as mal (genou, tibia, mollet, tendon d\'Achille, pied, '
+                    "hanche, arrière de la cuisse, dos) pour que le coach te propose des exercices adaptés.</p></div>",
+                    unsafe_allow_html=True)
+    flags = "".join(f"<li>{esc(f)}</li>" for f in data.get("signaux_alerte", []))
+    rules = " ".join(esc(r) for r in data.get("regles", []))
+    st.markdown(f'<div class="alerte-sante"><b>Consulte rapidement un médecin si :</b><ul>{flags}</ul>'
+                f"<p>{rules}</p></div>", unsafe_allow_html=True)
 
 
 def coach_today() -> None:
@@ -545,6 +636,8 @@ def coach_today() -> None:
 
 
 def page_coach() -> None:
+    if "toast" in st.session_state:
+        st.toast(st.session_state.pop("toast"))
     status = get("/coach/statut") or {}
     st.title("Ton coach")
     st.markdown(f'<p class="mention-ia">Intelligence artificielle : modèle {esc(status.get("modele", "local"))}, '
@@ -574,6 +667,7 @@ def page_coach() -> None:
         elif "bilan" in st.session_state:
             st.markdown(st.session_state["bilan"]["content"])
             st.markdown(st.session_state["bilan"]["note"], unsafe_allow_html=True)
+            coach_extras(st.session_state["bilan"])
         else:
             st.markdown('<p class="vide">Le coach résume ta semaine (charge, récupération, sommeil, stress) et te '
                         "propose la suite, en lien avec ton objectif.</p>", unsafe_allow_html=True)
@@ -597,6 +691,7 @@ def page_coach() -> None:
             st.markdown(message["content"])
             if message.get("note"):
                 st.markdown(message["note"], unsafe_allow_html=True)
+            coach_extras(message)
     if question:
         with st.container(key=f"msg_{len(history)}_user"):
             st.markdown(question)
@@ -606,7 +701,8 @@ def page_coach() -> None:
                                    verify={"question": question, "historique": past})
         if not answer["erreur"]:
             history += [{"role": "user", "content": question},
-                        {"role": "assistant", "content": answer["content"], "note": answer["note"]}]
+                        {"role": "assistant", "content": answer["content"], "note": answer["note"],
+                         **{k: answer[k] for k in ("proposition", "proposition_refusee", "exercices") if answer[k]}}]
 
 
 # --- Planning ------------------------------------------------------------------------------------
@@ -696,6 +792,8 @@ def page_goals() -> None:
 
 
 def page_planning() -> None:
+    if "toast" in st.session_state:
+        st.toast(st.session_state.pop("toast"))
     st.title("Mon planning")
     plan = get("/planning/actif")
     if not plan:
@@ -728,6 +826,17 @@ def page_planning() -> None:
         st.markdown('<div class="donnees"><h4>Adapté à tes derniers jours</h4><ul>'
                     + "".join(f"<li>{esc(n)}</li>" for n in plan["personnalisation"]) + "</ul></div>",
                     unsafe_allow_html=True)
+    if plan.get("ajustements"):
+        st.markdown('<div class="titre-section">Modifié avec ton coach</div>', unsafe_allow_html=True)
+        for adj in plan["ajustements"]:
+            line, action = st.columns([5, 1], vertical_alignment="center")
+            line.markdown(f'<p class="ajustement-ligne">{esc(adj["libelle"])}</p>', unsafe_allow_html=True)
+            if action.button("Annuler", key=f"annuler_{adj['id']}"):
+                ok, answer = post(f"/planning/ajustements/{adj['id']}/annuler", {})
+                api_get.clear()
+                watch = (answer.get("montre") or {}).get("message") if ok else None
+                st.session_state["toast"] = "Séance d'origine rétablie." + (f" {watch}" if watch else "")
+                st.rerun()
     notes = [esc(n) for n in plan["notes"]] + ["Objectif, jours de tennis et nombre de sorties : onglet Objectifs. "
                                                "Nutrition du jour de course : onglet Prédictions."]
     st.markdown('<div class="lecture" style="margin-top:1rem"><h4>À savoir</h4><p>' + "<br>".join(notes)

@@ -183,3 +183,30 @@ def test_predictions_nutrition_sans_erreur(app_env):
     assert not at.warning, [w.value for w in at.warning]  # « Données indisponibles » s'affiche en avertissement
     assert "Nutrition et hydratation" in [h.value for h in at.header]
     assert "Fiabilité de ces prédictions" in [h.value for h in at.header]
+
+
+def test_le_coach_propose_une_modification_validee_d_un_clic(private_data):
+    at = open_page("Coach")
+    at.chat_input[0].set_value("Je suis fatigué, allège ma prochaine séance").run()
+    assert not at.exception, at.exception
+    page = " ".join(m.value for m in at.markdown)
+    assert "Proposition du coach" in page and "[[" not in page
+    next(b for b in at.button if b.label == "Valider").click().run()
+    assert not at.exception, at.exception
+    assert any("Validée" in m.value for m in at.markdown)
+    assert not [b for b in at.button if b.label == "Valider"]  # plus de bouton une fois validée
+
+    planning = open_page("Planning")
+    assert not planning.exception, planning.exception
+    text = " ".join(m.value for m in planning.markdown)
+    assert "Modifié avec ton coach" in text and "Modifiée avec ton coach" in text
+    next(b for b in planning.button if b.label == "Annuler").click().run()
+    assert not planning.exception and "Modifiée avec ton coach" not in " ".join(m.value for m in planning.markdown)
+
+
+def test_douleur_exercices_et_alerte(private_data):
+    at = open_page("Coach")
+    at.chat_input[0].set_value("J'ai mal au tendon d'Achille depuis ma dernière sortie").run()
+    assert not at.exception, at.exception
+    page = " ".join(m.value for m in at.markdown)
+    assert "Exercices souvent proposés en kiné" in page and "Consulte rapidement un médecin" in page

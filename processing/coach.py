@@ -12,6 +12,7 @@ RUNLAB_LLM=fake pour un faux modèle déterministe (tests et CI, sans réseau).
 
 import json
 import os
+import re
 from collections.abc import Callable
 
 import requests
@@ -32,9 +33,20 @@ Règles :
 - Appuie-toi uniquement sur le CONTEXTE ci-dessous et sur les résultats des outils. N'invente jamais un chiffre.
   Si une donnée manque, appelle l'outil adapté ; si elle n'existe pas, dis-le simplement.
 - Cite les chiffres utiles (allures en min/km, temps, VFC, charge) pour justifier tes conseils.
-- Tu n'es pas médecin : en cas de douleur, de symptôme ou de malaise, recommande d'arrêter et de consulter
-  un professionnel de santé, sans poser de diagnostic.
-- Tu ne modifies rien : tu proposes, l'utilisateur décide.
+- Tu n'es pas médecin : ne pose jamais de diagnostic. En cas de douleur, si DONNÉES UTILES contient « douleur »,
+  cite 2 ou 3 exercices de cette liste (nom et dosage), rappelle de ne pas dépasser une douleur de 3 sur 10,
+  donne les signaux qui doivent faire consulter rapidement, et conseille de voir le spécialiste indiqué.
+  En cas de malaise ou de symptôme inquiétant : arrêter et consulter.
+- Tu ne modifies rien toi-même : tu proposes, l'utilisateur valide d'un bouton. N'écris jamais « c'est fait ».
+
+Modifier le planning : si l'utilisateur demande de changer une séance (jour, intensité, durée, repos), ou si
+c'est utile (douleur, fatigue, mauvaise nuit), propose UNE modification, explique-la en une ou deux phrases et
+demande-lui de la valider. Termine alors ta réponse par une dernière ligne, exactement au format :
+[[PROPOSITION]] {{"date": "AAAA-MM-JJ", "action": "deplacer", "nouvelle_date": "AAAA-MM-JJ", "raison": "..."}}
+- date : celle de la séance concernée, prise dans prochaines_seances ; aide-toi du calendrier pour les jours ;
+- action : deplacer (avec nouvelle_date), alleger, intensifier, raccourcir ou allonger (avec "facteur", ex. 0.7
+  ou 1.2), repos ;
+- pas de ligne [[PROPOSITION]] si aucune modification n'est utile.
 - Sois concis : 3 à 8 phrases, ou une courte liste si c'est plus clair. Pas de formules creuses.
 - Les allures sont en équivalent plat ; le planning respecte déjà les jours de tennis et la forme du jour.
 
@@ -141,6 +153,15 @@ class FakeLLM:
         topics = data.split("DONNÉES UTILES :")[-1][:120] if "DONNÉES UTILES" in data else "contexte"
         for word in f"Réponse de test fondée sur : {topics.strip()[:60]}.".split(" "):
             yield word + " "
+        question = _normalize(messages[-1]["content"])
+        upcoming = re.findall(r'"date": "(\d{4}-\d{2}-\d{2})", "jour"', data)
+        if upcoming and any(w in question for w in ("allege", "decale", "repos")):
+            action = "repos" if "repos" in question else "alleger"
+            proposal = {"date": upcoming[0], "action": action, "raison": "demande de l'utilisateur"}
+            if "decale" in question:
+                proposal = {"date": upcoming[0], "action": "deplacer", "nouvelle_date": "AUTRE", "raison": "test"}
+            yield " Tu valides ?\n[[PROP"  # le marqueur arrive en plusieurs morceaux, comme avec un vrai modèle
+            yield "OSITION]] " + json.dumps(proposal)
         yield {"duree_s": 0.1, "jetons": 8, "jetons_par_s": 80.0, "contexte_jetons": 100}
 
     def status(self) -> dict:
@@ -153,11 +174,20 @@ def get_llm():
 
 # --- Contexte et boucle d'outils -------------------------------------------------------------------
 
-def compact_context(forme: dict, analyse: dict, plan: dict, goals: list[dict]) -> dict:
+def compact_context(forme: dict, analyse: dict, plan: dict, goals: list[dict], today: str | None = None) -> dict:
     """Ce qu'un coach doit savoir d'emblée, en quelques centaines de mots."""
-    upcoming = [s for w in plan.get("semaines", []) for s in w["seances"] if not s.get("passee")][:4]
+    from datetime import date, timedelta
+
+    day0 = date.fromisoformat(today) if today else None
+    upcoming = [s for w in plan.get("semaines", []) for s in w["seances"]
+                if not s.get("passee") and (day0 is None or s["date"] >= today)][:4]
     active = next((g for g in goals if g.get("actif")), None)
+    names = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+    calendar = None if day0 is None else [f"{names[(day0 + timedelta(days=i)).weekday()]} "
+                                          f"{(day0 + timedelta(days=i)).isoformat()}" for i in range(10)]
     return {
+        "aujourd_hui": today,
+        "calendrier": calendar,
         "date_des_donnees": forme.get("date"),
         "verdict_du_jour": {k: analyse["verdict"][k] for k in ("titre", "score", "explication")},
         "forme": {k: forme.get(k) for k in ("hrv_ecart_pct", "sommeil_h", "fc_repos", "fraicheur_tsb",
@@ -166,7 +196,8 @@ def compact_context(forme: dict, analyse: dict, plan: dict, goals: list[dict]) -
                                                        "activites") if k in analyse},
         "objectif_actif": None if active is None else {k: active.get(k) for k in (
             "nom", "libelle", "date_course", "jours_restants", "temps_vise", "temps_predit", "statut")},
-        "prochaines_seances": [{k: s.get(k) for k in ("date", "jour", "titre", "description", "allure", "fc_cible")}
+        "prochaines_seances": [{k: s.get(k) for k in ("date", "jour", "type", "titre", "description", "allure",
+                                                      "fc_cible")}
                                for s in upcoming],
         "adaptations_du_planning": plan.get("personnalisation", []),
     }
@@ -211,12 +242,17 @@ def run_coach(llm, user_message: str, context: dict, tools: dict[str, Callable[.
 
 # --- Mode direct : un seul appel, avec les données choisies d'après la question -------------------
 
+PLAN_CHANGE_WORDS = ("decal", "deplac", "repos", "annul", "remplac", "allege", "alleg", "intens", "plus court",
+                     "plus long", "raccourc", "allong", "supprim", "change", "modifi", "pas dispo", "peux pas courir",
+                     "fatigue", "crev")
+
 TOPIC_KEYWORDS = {
     "allures": ("allure", "footing", "endurance", " ef", "fraction", "tempo", "seuil", "vma", "rythme", "vite", "lent"),
     "predictions": ("temps", "chrono", "predi", "objectif", "semi", "marathon", "10 km", "5 km", "10k", "5k", "record"),
     "nutrition": ("mang", "boire", "bois", "gel", "nutrition", "hydrat", "ravito", "repas", "sucre", "eau", "glucide"),
     "seances": ("hier", "dernier", "derniere", "sortie", "fait", "realise"),
-    "planning": ("semaine", "planning", "programme", "demain", "prochain", "seance", "ce soir", "aujourd"),
+    "planning": ("semaine", "planning", "programme", "demain", "prochain", "seance", "ce soir", "aujourd",
+                 "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche", *PLAN_CHANGE_WORDS),
 }
 
 
@@ -227,13 +263,17 @@ def _normalize(text: str) -> str:
 
 def detect_topics(question: str) -> list[str]:
     """Sujets de la question, repérés par mots-clés : au plus trois, pour garder un contexte court."""
+    from processing.rehab import mentions_pain
+
     text = _normalize(question)
-    return [topic for topic, words in TOPIC_KEYWORDS.items() if any(w in text for w in words)][:3]
+    topics = [topic for topic, words in TOPIC_KEYWORDS.items() if any(w in text for w in words)]
+    if mentions_pain(question):  # une douleur passe avant tout le reste, avec le planning pour l'alléger
+        topics = ["douleur", "planning"] + [t for t in topics if t != "planning"]
+    return topics[:3]
 
 
 def detect_distance(question: str) -> dict:
     """Distance évoquée dans la question, pour les prédictions et la nutrition."""
-    import re
 
     text = _normalize(question)
     if "semi" in text:
@@ -283,8 +323,11 @@ def answer_direct(llm, user_message: str, context: dict, fetchers: dict, history
             stats = item
         else:
             parts.append(item)
-    return {"reponse": "".join(parts).strip(), "outils_utilises": topics, "modele": getattr(llm, "model", "?"),
-            "mesures": stats}
+    from processing.adjustments import parse_proposal, split_marker
+
+    text, hidden = split_marker("".join(parts).strip())
+    return {"reponse": text.strip(), "outils_utilises": topics, "modele": getattr(llm, "model", "?"),
+            "mesures": stats, "proposition_brute": parse_proposal(hidden), "texte_complet": "".join(parts).strip()}
 
 
 # --- Commentaire d'une sortie ---------------------------------------------------------------------

@@ -116,3 +116,18 @@ def send_session(client, session: dict, data_dir: Path) -> dict:
     path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"statut": "remplacee" if previous else "envoyee", "workout_id": workout_id, "date": session["date"],
             "titre": session["titre"]}
+
+
+def remove_session(client, day: str, data_dir: Path) -> dict:
+    """Retire du calendrier Garmin la séance envoyée pour ce jour (devenu un jour de repos ou séance déplacée)."""
+    history = load_history(data_dir)
+    previous = history.pop(day, None)
+    if previous is None:
+        return {"statut": "rien_a_retirer", "date": day}
+    try:
+        client.delete_workout(previous["workout_id"])
+    except Exception:
+        pass  # déjà supprimée à la main dans Garmin Connect
+    path = history_file(data_dir)
+    path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"statut": "retiree", "date": day}

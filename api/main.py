@@ -20,6 +20,15 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from api.sync import SyncManager
+from processing.adjustments import (
+    MarkerFilter,
+    apply_adjustments,
+    load_adjustments,
+    parse_proposal,
+    save_adjustments,
+    set_status,
+)
+from processing.adjustments import validate as validate_adjustment
 from processing.backtest import (
     MIN_PAST_FOR_RECAL,
     RECAL_SOURCES,
@@ -82,8 +91,9 @@ from processing.performance import (
     vo2max_history,
 )
 from processing.planning import build_plan, category_for
+from processing.rehab import pain_data
 from processing.run_analysis import analyse_run, efficiency_history
-from processing.watch import load_history, send_session, to_garmin_workout
+from processing.watch import load_history, remove_session, send_session, to_garmin_workout
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.getenv("RUNLAB_DATA_DIR", ROOT / "data"))
@@ -422,6 +432,8 @@ def planning(
         "volume_actuel_km_semaine": round(base_km, 1),
         "verdict_du_jour": verdict,
         "personnalisation": adaptations,
+        "allures_plan": paces,  # sert à recalculer une séance ajustée par le coach
+        "jours_tennis": tennis,
         **plan,
     }
 
@@ -508,20 +520,33 @@ def planning_actif() -> dict:
     gold = read_parquet("gold/daily_features.parquet")
     goal = active_goal(DATA_DIR, reference_day(gold))
     if goal is None:
-        return {**planning(distance="10k", date_course=None, seances_par_semaine=3, jours_tennis="",
-                           jour_sortie_longue=6, denivele_m=0, distance_km=None), "objectif_actif": None}
+        return with_adjustments({**planning(distance="10k", date_course=None, seances_par_semaine=3, jours_tennis="",
+                                            jour_sortie_longue=6, denivele_m=0, distance_km=None),
+                                 "objectif_actif": None}, None)
     preset = goal.get("distance") in DISTANCES_M
     plan = planning(distance=goal["distance"] if preset else "10k", date_course=date.fromisoformat(goal["date_course"]),
                     seances_par_semaine=goal["seances_par_semaine"],
                     jours_tennis=",".join(str(d) for d in goal["jours_tennis"]),
                     jour_sortie_longue=goal["jour_sortie_longue"], denivele_m=goal["denivele_m"],
                     distance_km=None if preset else goal_km(goal))
-    return {**plan, "objectif_actif": goal}
+    return with_adjustments({**plan, "objectif_actif": goal}, goal)
+
+
+def with_adjustments(plan: dict, goal: dict | None) -> dict:
+    """Applique les ajustements validés avec le coach pour cet objectif (ou pour le plan sans objectif)."""
+    goal_id = None if goal is None else goal["id"]
+    mine = [a for a in load_adjustments(DATA_DIR) if a.get("objectif") == goal_id]
+    gold = read_parquet("gold/daily_features.parquet")
+    adjusted = apply_adjustments(plan, mine, plan.get("allures_plan", {}), reference_day(gold))
+    adjusted["ajustements"] = [a for a in mine if a["statut"] == "accepte"
+                               and a["id"] in adjusted.get("ajustements_appliques", [])]
+    return adjusted
 
 
 def today_date() -> date:
-    """La vraie date du jour (remplaçable dans les tests)."""
-    return date.today()
+    """La vraie date du jour. RUNLAB_TODAY=AAAA-MM-JJ la fixe (tests sur données synthétiques, démonstration)."""
+    fixed = os.getenv("RUNLAB_TODAY")
+    return date.fromisoformat(fixed) if fixed else date.today()
 
 
 def todays_session() -> dict | None:
@@ -638,6 +663,98 @@ def seances(limite: int = Query(10, ge=1, le=100)) -> dict:
     return {"seances": out}
 
 
+# --- Ajustements du planning proposés par le coach -----------------------------------------------
+
+def register_proposal(raw: dict | None) -> tuple[dict | None, str | None]:
+    """Vérifie et enregistre une proposition du coach (statut « propose ») ; rien ne change avant validation."""
+    if not raw:
+        return None, None
+    gold = read_parquet("gold/daily_features.parquet")
+    goal = active_goal(DATA_DIR, reference_day(gold))
+    plan = planning_actif()
+    adjustment, error = validate_adjustment(raw, plan, today_date(), set(plan.get("jours_tennis", [])),
+                                 plan["verdict_du_jour"]["niveau"], plan.get("allures_plan", {}))
+    if adjustment is None:
+        return None, error
+    adjustment["objectif"] = None if goal is None else goal["id"]
+    items = [a for a in load_adjustments(DATA_DIR) if not (a["statut"] == "propose" and a["date"] == adjustment["date"])]
+    save_adjustments(DATA_DIR, items + [adjustment])  # une nouvelle proposition remplace l'ancienne sur la même séance
+    return adjustment, None
+
+
+def update_watch(days: set[str]) -> dict | None:
+    """Si l'ajustement touche la séance du jour, la montre est mise à jour aussitôt (sinon, au prochain envoi)."""
+    today = today_date().isoformat()
+    if today not in days or os.getenv("RUNLAB_WATCH_AUTO", "1") == "0":
+        return None
+    from ingestion.garmin_export import connect
+
+    try:
+        client = connect()
+        session = todays_session()
+        result = (send_session(client, session, DATA_DIR) if session
+                  else remove_session(client, today, DATA_DIR))
+    except Exception as exc:  # Garmin injoignable : le planning est quand même à jour
+        return {"statut": "non_envoyee", "message": f"Montre non mise à jour ({exc}). Réessaie depuis l'accueil."}
+    messages = {"envoyee": "Séance du jour envoyée sur ta montre.", "remplacee": "Séance du jour remplacée sur ta montre.",
+                "deja_envoyee": "Ta montre a déjà la bonne séance.", "retiree": "Séance du jour retirée de ta montre.",
+                "rien_a_retirer": "Rien à changer sur ta montre."}
+    return {**result, "message": messages.get(result["statut"], "")}
+
+
+@app.get("/planning/ajustements", tags=["planning"])
+def liste_ajustements(statut: str | None = None) -> dict:
+    """Ajustements proposés par le coach : proposés, acceptés, refusés ou annulés."""
+    items = load_adjustments(DATA_DIR)
+    return {"ajustements": [a for a in items if statut is None or a["statut"] == statut]}
+
+
+@app.post("/planning/ajustements", tags=["planning"])
+def proposer_ajustement(proposition: dict = Body(..., embed=True)) -> dict:
+    """Propose un ajustement (date, action, nouvelle_date, facteur, raison). Il faut ensuite le valider."""
+    adjustment, error = register_proposal(proposition)
+    if adjustment is None:
+        raise HTTPException(422, error or "Proposition vide.")
+    return {"ajustement": adjustment}
+
+
+@app.post("/planning/ajustements/{adjustment_id}/valider", tags=["planning"])
+def valider_ajustement(adjustment_id: str) -> dict:
+    """Tu valides : le planning change, et la montre aussi si la séance du jour est concernée."""
+    current = next((a for a in load_adjustments(DATA_DIR) if a["id"] == adjustment_id), None)
+    if current is None:
+        raise HTTPException(404, "Ajustement introuvable.")
+    if current["statut"] != "propose":
+        raise HTTPException(409, f"Cet ajustement est déjà {current['statut']}.")
+    adjustment = set_status(DATA_DIR, adjustment_id, "accepte")
+    watch = update_watch({adjustment["date"], adjustment.get("nouvelle_date") or adjustment["date"]})
+    return {"ajustement": adjustment, "montre": watch, "message": "C'est noté : ton planning est mis à jour."}
+
+
+@app.post("/planning/ajustements/{adjustment_id}/refuser", tags=["planning"])
+def refuser_ajustement(adjustment_id: str) -> dict:
+    adjustment = set_status(DATA_DIR, adjustment_id, "refuse")
+    if adjustment is None:
+        raise HTTPException(404, "Ajustement introuvable.")
+    return {"ajustement": adjustment}
+
+
+@app.post("/planning/ajustements/{adjustment_id}/annuler", tags=["planning"])
+def annuler_ajustement(adjustment_id: str) -> dict:
+    """Revenir à la séance d'origine (depuis l'onglet Planning)."""
+    adjustment = set_status(DATA_DIR, adjustment_id, "annule")
+    if adjustment is None:
+        raise HTTPException(404, "Ajustement introuvable.")
+    watch = update_watch({adjustment["date"], adjustment.get("nouvelle_date") or adjustment["date"]})
+    return {"ajustement": adjustment, "montre": watch}
+
+
+@app.get("/coach/exercices", tags=["coach"])
+def exercices(question: str) -> dict:
+    """Exercices de renforcement et signaux d'alerte pour la douleur évoquée (base fixe, pas de génération)."""
+    return pain_data(question)
+
+
 # --- Coach IA (modèle local Ollama) ---------------------------------------------------------------
 
 def coach_tools() -> dict:
@@ -662,7 +779,7 @@ def coach_tools() -> dict:
 
 
 def coach_context() -> dict:
-    return compact_context(forme(), analyse(), planning_actif(), objectifs()["objectifs"])
+    return compact_context(forme(), analyse(), planning_actif(), objectifs()["objectifs"], today_date().isoformat())
 
 
 def _race(question: str) -> dict:
@@ -708,12 +825,19 @@ def coach_fetchers() -> dict:
 
     def planning_(_q):
         plan = planning_actif()
-        upcoming = [x for w in plan["semaines"] for x in w["seances"] if not x.get("passee")][:7]
-        return {"prochaines": [{k: x.get(k) for k in ("date", "jour", "titre", "distance_km", "allure", "fc_cible")}
-                               for x in upcoming]}
+        today = today_date().isoformat()
+        upcoming = [x for w in plan["semaines"] for x in w["seances"] if x["date"] >= today][:7]
+        return {"prochaines": [{k: x.get(k) for k in ("date", "jour", "type", "titre", "distance_km", "allure",
+                                                      "fc_cible")} for x in upcoming]}
+
+    def douleur_(q):
+        data = pain_data(q)  # base d'exercices relue : le modèle cite, il n'invente pas
+        return {"zones": [{k: z[k] for k in ("nom", "specialiste", "exercices", "course")} for z in data["zones"]],
+                "zone_a_preciser": data["zones_disponibles"], "signaux_alerte": data["signaux_alerte"][:5],
+                "regle": data["regles"][0]}
 
     return {"allures": allures_, "predictions": predictions_, "nutrition": nutrition_, "seances": seances_,
-            "planning": planning_}
+            "planning": planning_, "douleur": douleur_}
 
 
 def model_unavailable(llm, exc: Exception) -> HTTPException:
@@ -725,7 +849,10 @@ def ask_coach(message: str, history: list[dict] | None = None) -> dict:
     try:
         if COACH_MODE == "outils":
             return run_coach(llm, message, coach_context(), coach_tools(), history)
-        return answer_direct(llm, message, coach_context(), coach_fetchers(), history)
+        answer = answer_direct(llm, message, coach_context(), coach_fetchers(), history)
+        proposal, error = register_proposal(answer.pop("proposition_brute"))
+        answer.pop("texte_complet", None)
+        return {**answer, "proposition": proposal, "proposition_refusee": error}
     except requests.RequestException as exc:
         raise model_unavailable(llm, exc) from exc
 
@@ -759,12 +886,34 @@ def question_coach_flux(question: str = Body("", embed=True), historique: list[d
     generator = run_coach_direct_stream(llm, question.strip(), coach_context(), coach_fetchers(), historique)
     topics = next(generator)
 
+    asked = question.strip()
+
     def body():
+        hidden = MarkerFilter()  # la ligne [[PROPOSITION]] du modèle n'est jamais affichée telle quelle
+        stats = None
         try:
             for item in generator:
-                yield ("\n[[MESURES]] " + json.dumps(item)) if isinstance(item, dict) else item
+                if isinstance(item, dict):
+                    stats = item
+                    continue
+                visible = hidden.feed(item)
+                if visible:
+                    yield visible
         except requests.RequestException as exc:
             yield f"\n[[ERREUR]] Le modèle local ne répond pas ({llm.model}) : {exc}"
+            return
+        rest = hidden.flush()
+        if rest:
+            yield rest
+        if stats:
+            yield "\n[[MESURES]] " + json.dumps(stats)
+        proposal, error = register_proposal(parse_proposal(hidden.hidden))
+        if proposal:
+            yield "\n[[PROPOSITION]] " + json.dumps(proposal, ensure_ascii=False)
+        elif error:
+            yield "\n[[PROPOSITION_REFUSEE]] " + error
+        if "douleur" in topics:
+            yield "\n[[EXERCICES]] " + json.dumps(pain_data(asked), ensure_ascii=False)
 
     return StreamingResponse(body(), media_type="text/plain; charset=utf-8",
                              headers={"X-Coach-Sujets": ",".join(topics)})

@@ -227,3 +227,35 @@ h3 { font-size: 1rem !important; font-weight: 600 !important; }
 }
 .st-key-action_avis button:hover { color: var(--encre); background: transparent; }
 .st-key-action_avis button p, .st-key-action_bilan button p { color: var(--accent) !important; font-weight: 600; }
+
+/* Proposition de modification du planning par le coach */
+.proposition, .exercices {
+  border: 1px solid var(--filet); border-radius: 10px; padding: .9rem 1.1rem; margin: .8rem 0 .5rem; background: #fff;
+}
+.prop-tete { font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--gris); font-weight: 600; }
+.prop-libelle { font-weight: 600; margin: .35rem 0 .2rem; }
+.prop-raison { color: var(--gris); font-size: .88rem; margin: 0 0 .5rem; }
+.prop-avant-apres { display: grid; grid-template-columns: 1fr auto 1fr; gap: .8rem; align-items: center; margin-top: .5rem; }
+.prop-avant-apres > div > span { display: block; font-size: .72rem; color: var(--gris); text-transform: uppercase; letter-spacing: .06em; }
+.prop-avant-apres b { display: block; font-weight: 600; }
+.prop-avant-apres small { color: var(--gris); font-variant-numeric: tabular-nums; }
+.prop-fleche { color: var(--gris); font-size: 1.2rem; }
+.prop-alertes { margin: .6rem 0 0; padding-left: 1.1rem; color: #6b4a1f; font-size: .86rem; }
+.prop-statut { font-size: .85rem; margin: .2rem 0 .8rem; color: var(--gris); }
+.prop-accepte::before { content: "✓ "; color: #2f7d4f; font-weight: 600; }
+@media (max-width: 640px) { .prop-avant-apres { grid-template-columns: 1fr; } .prop-fleche { transform: rotate(90deg); } }
+.exercices ol { margin: .5rem 0; padding-left: 1.2rem; }
+.exercices li { margin-bottom: .45rem; }
+.exercices .dosage { color: var(--gris); font-size: .85rem; margin-left: .3rem; font-variant-numeric: tabular-nums; }
+.exercices p { font-size: .9rem; margin: .35rem 0 0; }
+.alerte-sante {
+  font-size: .86rem; padding: .6rem .9rem; border-left: 3px solid #b5483a; background: #fbf0ee; color: #5c2a22;
+  border-radius: 0 8px 8px 0; margin: .4rem 0 .8rem;
+}
+.alerte-sante ul { margin: .3rem 0; padding-left: 1.1rem; }
+.alerte-sante p { margin: .3rem 0 0; }
+.modifiee {
+  display: inline-block; margin-top: .3rem; font-size: .72rem; padding: .05rem .5rem; border-radius: 999px;
+  border: 1px solid var(--filet); color: var(--gris);
+}
+.ajustement-ligne { margin: 0; font-size: .92rem; }

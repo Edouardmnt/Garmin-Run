@@ -260,6 +260,26 @@ python scripts/run_pipeline.py evaluation   # tableau des méthodes, CSV dans da
 
 Chaque exécution est enregistrée dans l'expérience MLflow `prediction-backtest`, avec le commit du code : on suit la qualité des prédictions au fil des versions. La page Prédictions affiche la fiabilité mesurée (`GET /qualite/predictions`) juste sous les temps prédits.
 
+## Le coach adapte ton planning (avec ta validation)
+
+Dans la discussion, demande par exemple « décale ma sortie longue à samedi », « je suis crevé, allège ma séance de demain » ou « remplace mon tempo par du repos ». Le coach peut aussi le proposer de lui-même (fatigue, mauvaise nuit, douleur). Il ne change jamais rien seul :
+
+1. il explique sa proposition et l'écrit sur une ligne technique (masquée à l'écran) ;
+2. le code la **vérifie** : la séance existe et est à venir, le nouveau jour est libre et dans le planning, le jour de course ne bouge pas. Il **signale les risques** : deux séances dures d'affilée, jour de tennis, forme du jour pas au vert ;
+3. une carte « Avant → Après » s'affiche, avec **Valider** et **Refuser** ;
+4. une fois validée, le planning est recalculé (onglet Planning : « Modifiée avec ton coach », avec un bouton **Annuler**). Si la séance du jour change, **la montre est mise à jour aussitôt**.
+
+Actions possibles : déplacer, alléger (séance dure → footing facile), intensifier (footing → bloc tempo), raccourcir ou allonger (facteur borné), repos. Les ajustements sont enregistrés dans `data/planning/ajustements.json`. Points d'accès : `GET/POST /planning/ajustements`, `POST /planning/ajustements/{id}/valider | refuser | annuler`.
+
+**Douleurs.** Quand tu parles d'une douleur (genou, tibia, mollet, tendon d'Achille, pied, hanche, ischio-jambiers, dos), le coach ne pose aucun diagnostic. Il s'appuie sur une base d'exercices fixe et relue (`processing/rehab.py`), et non sur ce que le modèle « croit savoir ». Il affiche :
+- les exercices de renforcement et de mobilité souvent proposés en kiné, avec leur dosage ;
+- la règle des 3/10 ;
+- ce qu'il faut changer côté course ;
+- le professionnel à consulter ;
+- les signaux qui doivent faire consulter rapidement (douleur osseuse au toucher, gonflement, douleur nocturne, boiterie...).
+
+Il propose en même temps d'alléger ou de remplacer par du repos la prochaine séance dure.
+
 ## Qualité du coach : évaluation et chiffres vérifiés
 
 Un modèle de langage peut écrire une allure ou un temps qui ne vient de nulle part. Deux garde-fous :

@@ -26,11 +26,12 @@ def evaluate(llm, items: list[dict]) -> tuple[list[dict], list[dict]]:
         topics, extra = gather_topic_data(item["question"], fetchers)
         start = time.time()
         answer = answer_direct(llm, item["question"], context, fetchers)
-        score = score_answer(item, answer["reponse"], context, extra, topics)
+        score = score_answer(item, answer["reponse"], context, extra, topics, answer.get("proposition_brute"))
         score["duree_s"] = round(time.time() - start, 1)
         scores.append(score)
         answers.append({"id": item["id"], "question": item["question"], "reponse": answer["reponse"], **score})
-        status = "ok" if score["securite_ok"] and not score["chiffres_non_verifies"] else "!!"
+        good = score["securite_ok"] and not score["chiffres_non_verifies"] and score["proposition_ok"] is not False
+        status = "ok" if good else "!!"
         print(f"  {status} {item['id']:18} faits {score['faits_trouves']}/{score['faits_attendus']}   "
               f"non vérifiés {len(score['chiffres_non_verifies'])}   {score['duree_s']:>5.1f} s")
     return scores, answers
@@ -56,6 +57,7 @@ def main() -> None:
     print(f"Faits attendus cités      : {summary['rappel_faits_pct']} %")
     print(f"Réponses sans chiffre non vérifiable : {summary['reponses_sans_chiffre_invente_pct']} %")
     print(f"Règles de sécurité        : {summary['securite_pct']} %")
+    print(f"Propositions de modification attendues bien formulées : {summary['propositions_pct']} %")
     print(f"Durée moyenne par réponse : {summary['duree_moyenne_s']} s")
     for a in answers:
         if a["chiffres_non_verifies"] or not a["securite_ok"]:

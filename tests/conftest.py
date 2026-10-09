@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+# Les données synthétiques s'arrêtent au 30/09/2026 : « aujourd'hui » est fixé au même jour, pour que les tests
+# (séances à venir, propositions du coach) donnent le même résultat quelle que soit la date réelle.
+os.environ.setdefault("RUNLAB_TODAY", "2026-09-30")
 SCRIPTS = [
     "scripts/generate_sample_data.py",
     "scripts/generate_sample_lifesnaps.py",
