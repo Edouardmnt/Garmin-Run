@@ -1,7 +1,7 @@
 # Foulée — coach de course à pied data & IA, de bout en bout
 
 [![CI](https://github.com/Edouardmnt/Garmin-Run/actions/workflows/ci.yml/badge.svg)](https://github.com/Edouardmnt/Garmin-Run/actions/workflows/ci.yml)
-[![Démo en ligne](https://img.shields.io/badge/D%C3%A9mo-Hugging%20Face-ffcc4d?logo=huggingface&logoColor=black)](https://huggingface.co/spaces/edouardmnt04/foulee)
+[![Démo en ligne](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://foulee.streamlit.app)
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 
 Application personnelle construite à partir de **mes propres données de montre Garmin**, de l'ingestion jusqu'au coach IA :
@@ -9,7 +9,7 @@ elle mesure ma charge d'entraînement et ma récupération, prédit mes temps de
 planifie ma préparation, envoie la séance du jour sur ma montre, et répond à mes questions avec un **modèle de langage
 local** dont chaque chiffre est vérifié.
 
-### ▶ [Essayer la démo en ligne](https://huggingface.co/spaces/edouardmnt04/foulee) — rien à installer, données synthétiques d'un coureur fictif
+### ▶ [Essayer la démo en ligne](https://foulee.streamlit.app) — rien à installer, données synthétiques d'un coureur fictif
 
 <p align="center"><a href="docs/images/accueil.png"><img src="docs/images/accueil-apercu.png" width="80%" alt="Accueil : temps prédit sur 10 km, verdict du jour, prochaines séances"></a></p>
 
@@ -524,15 +524,17 @@ pytest -v        # tests unitaires et test de bout en bout du pipeline
 │   └── sync.py                  # synchronisation à la demande, en arrière-plan, avec progression
 ├── dashboard/
 │   ├── app.py                   # tableau de bord Streamlit, client de l'API
+│   ├── streamlit_app.py         # point d'entrée de la démo en ligne (Streamlit Community Cloud)
+│   ├── requirements.txt         # dépendances de la démo en ligne
 │   ├── style.css                # direction artistique : sportif, chic, épuré
 │   └── static/                  # police Archivo intégrée (licence OFL)
 ├── k8s/                         # manifestes Kubernetes (volume, config, CronJobs, API, tableau de bord, RBAC)
 │   └── tools/data-loader.yaml   # pod utilitaire pour accéder au volume
-├── deploy/huggingface/          # démo en ligne : Dockerfile, fiche du Space, script de publication
+├── deploy/huggingface/          # variante Docker de la démo (Hugging Face Spaces, offre PRO)
 ├── docs/images/                 # captures du tableau de bord (démo)
 ├── ops/windows/                 # démarrage automatique du cluster et accès local
 ├── tests/                       # tests unitaires et de bout en bout (pytest)
-├── .github/workflows/           # intégration continue (ci.yml) et publication de la démo (space.yml)
+├── .github/workflows/           # intégration continue (ci.yml) et publication manuelle sur Hugging Face (space.yml)
 ├── Dockerfile                   # image du pipeline
 ├── .dockerignore
 ├── pyproject.toml               # configuration pytest et ruff
@@ -582,7 +584,9 @@ pytest -v        # tests unitaires et test de bout en bout du pipeline
 
 ## Démo en ligne : comment elle est publiée
 
-À chaque push sur `main`, le workflow `.github/workflows/space.yml` publie la démo sur Hugging Face Spaces (SDK Docker) : `deploy/huggingface/push_space.py` copie uniquement le code utile (jamais `data/`), ajoute le `Dockerfile` et la fiche du Space ; au démarrage, le conteneur génère les données synthétiques puis lance le tableau de bord. Il suffit d'un secret `HF_TOKEN` (jeton « write ») dans le dépôt GitHub.
+La démo est hébergée gratuitement sur **Streamlit Community Cloud**, branchée sur ce dépôt : elle se redéploie à chaque push sur `main`. Son fichier principal, `dashboard/streamlit_app.py`, fixe l'environnement de démo (données synthétiques, API dans le même processus, coach par règles), génère les données une seule fois par conteneur (bronze → silver → gold), puis exécute le tableau de bord. Les dépendances viennent de `dashboard/requirements.txt`, sans Garmin, Ollama ni MLflow ; `data/` n'est jamais publié.
+
+Une variante Docker existe pour Hugging Face Spaces (`deploy/huggingface/`, workflow `space.yml` à lancer à la main) : les Spaces Docker demandent désormais l'offre PRO.
 
 ---
 
