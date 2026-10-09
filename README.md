@@ -572,7 +572,7 @@ pytest -v        # tests unitaires et test de bout en bout du pipeline
 - [x] Backtest des prédictions sans fuite et recalibrage appris sur les courses
 - [x] Évaluation du coach et détection des chiffres inventés
 - [x] Modifications du planning proposées par le coach et validées d'un clic ; exercices pour les douleurs
-- [x] Démo en ligne sur Hugging Face Spaces, publiée automatiquement
+- [x] Démo en ligne sur Streamlit Community Cloud, redéployée à chaque push
 - [ ] Questionnaires d'après-course comme jeu d'évaluation
 - [ ] Coach proactif le matin (séance allégée proposée si la récupération est basse)
 - [ ] Mémoire du coach (préférences, blessures validées) et recherche dans des sources fiables (RAG)
