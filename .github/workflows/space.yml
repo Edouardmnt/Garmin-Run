@@ -26,4 +26,4 @@ jobs:
           python deploy/huggingface/push_space.py --space "$HF_SPACE"
       - name: Pas de jeton Hugging Face
         if: env.HF_TOKEN == ''
-        run: echo "Secret HF_TOKEN absent : publication de la démo ignorée."
+        run: 'echo "Secret HF_TOKEN absent : publication de la démo ignorée."'
