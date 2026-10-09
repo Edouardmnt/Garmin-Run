@@ -58,10 +58,34 @@ def test_la_correction_des_questionnaires_ne_vient_que_du_passe(data_dir):
     first = backtest(perf, physio, load).iloc[0]["date"]
     late = [{"date_sortie": "2099-01-01", "reponses": {"prediction": "Trop optimiste"}}]  # réponse « future »
     results = backtest(perf, physio, load, late)
-    assert (results["correction_pct"] == 0).all()
+    assert (results["questionnaires"] == results["sans_correction"]).all()
     early = [{"date_sortie": (first - pd.Timedelta(days=5)).date().isoformat(),
               "reponses": {"prediction": "Trop optimiste"}}]
-    assert backtest(perf, physio, load, early).iloc[0]["correction_pct"] > 0
+    row = backtest(perf, physio, load, early).iloc[0]
+    assert row["questionnaires"] > row["sans_correction"]
+
+
+def test_recalibrage_prudent_et_plafonne():
+    from processing.backtest import recalibration
+
+    assert recalibration([], []) == 0
+    one = recalibration([1100], [1000])  # une seule erreur de -10 % : on n'en corrige qu'un quart
+    assert 0 < one < 3
+    many = recalibration([1100] * 30, [1000] * 30)
+    assert 8 < many < 10  # beaucoup d'erreurs identiques : on corrige presque tout l'écart
+    assert recalibration([2000] * 50, [1000] * 50) == 15  # plafond
+    assert recalibration([900] * 10, [1000] * 10) < 0  # prédictions trop lentes : on les raccourcit
+
+
+def test_le_recalibrage_n_apprend_que_du_passe(data_dir):
+    """La correction d'une performance ne dépend que des performances antérieures."""
+    perf, physio, load = inputs(data_dir)
+    results = backtest(perf, physio, load)
+    assert results["erreurs_passees"].iloc[0] == 0 and results["erreurs_passees"].is_monotonic_increasing
+    cut = len(results) // 2
+    day = results.iloc[cut]["date"]
+    truncated = backtest(perf[perf["date"] <= day], physio, load)  # on retire toutes les performances suivantes
+    assert truncated.iloc[-1]["correction_pct"] == pytest.approx(results.iloc[cut]["correction_pct"])
 
 
 def test_questionnaires():

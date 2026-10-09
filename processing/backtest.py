@@ -7,8 +7,11 @@ compare au chrono. Aucune information du jour de la performance n'est utilisée 
 que la mesure soit honnête.
 
 Méthodes comparées :
-- application    : la prédiction affichée (moyenne des estimations + correction des questionnaires) ;
-- sans_correction: la même, sans la correction issue des questionnaires (mesure son apport) ;
+- application    : la prédiction affichée : moyenne des estimations, recalibrée sur les erreurs passées
+                   sur tes COURSES (dès la première ; sans course, correction des questionnaires) ;
+- sans_correction: la moyenne des estimations, sans aucune correction ;
+- recalibree     : la moyenne des estimations, recalibrée sur les erreurs passées uniquement ;
+- questionnaires : la moyenne des estimations, corrigée par les seuls questionnaires ;
 - une colonne par source d'estimation (VO2 max montre, relation FC/vitesse, performances) ;
 - riegel_derniere: référence naïve, la formule de Riegel appliquée à la dernière performance connue.
 """
@@ -22,6 +25,28 @@ from processing.feedback import prediction_bias
 from processing.performance import estimate_vdot, predict_time_s, riegel_time_s
 
 MIN_DAYS_OF_HISTORY = 14  # sans au moins deux semaines de données avant, l'estimation n'a pas de sens
+
+# Recalibrage appris : correction = moyenne des erreurs passées (en log), réduite quand elles sont peu nombreuses
+SHRINK_K = 3            # avec n erreurs passées, on applique n / (n + 3) de l'écart moyen observé
+MAX_RECAL_PCT = 15.0    # plafond de la correction, dans un sens comme dans l'autre
+MIN_PAST_FOR_RECAL = 1  # au moins une course passée ; sans course, la correction des questionnaires prend le relais
+# Le recalibrage n'apprend que des COURSES : un tempo ou un meilleur km de séance n'est pas couru à fond,
+# en apprendre pousserait les prédictions de course vers la lenteur. La prudence (SHRINK_K) compense le petit nombre.
+RECAL_SOURCES = {"course"}
+
+
+def recalibration(actual_s, predicted_s) -> float:
+    """Correction (en %) à appliquer aux temps prédits, apprise sur des paires (temps réel, temps prédit).
+
+    Prédictions trop rapides (temps réels plus longs) : correction positive, les temps sont allongés.
+    """
+    actual, predicted = np.asarray(actual_s, dtype=float), np.asarray(predicted_s, dtype=float)
+    n = len(actual)
+    if n == 0:
+        return 0.0
+    mean_log = float(np.mean(np.log(actual / predicted)))
+    shrunk = mean_log * n / (n + SHRINK_K)
+    return float(np.clip((np.exp(shrunk) - 1) * 100, -MAX_RECAL_PCT, MAX_RECAL_PCT))
 
 
 def estimate_before(day: pd.Timestamp, perf: pd.DataFrame, physio: dict, load: pd.Series | None) -> dict | None:
@@ -49,9 +74,14 @@ def backtest(perf: pd.DataFrame, physio: dict, load: pd.Series | None = None,
         before = (p.date - timedelta(days=1)).date().isoformat()
         bias, _ = prediction_bias([f for f in feedback if f["date_sortie"] <= before])
         raw = predict_time_s(estimate["vdot"], p.distance_m)  # distance_m : équivalent plat (D+ inclus)
+        # Recalibrage : seules les performances strictement antérieures (déjà testées) servent à l'apprendre
+        past = [r for r in rows if r["date"] < p.date and r["source"] in RECAL_SOURCES]
+        recal = recalibration([r["temps_reel_s"] for r in past], [r["sans_correction"] for r in past])
+        correction = recal if len(past) >= MIN_PAST_FOR_RECAL else bias
         row = {"date": p.date, "source": p.source, "distance_m": p.distance_m, "temps_reel_s": p.time_s,
-               "vdot_estime": estimate["vdot"], "correction_pct": bias,
-               "application": raw * (1 + bias / 100), "sans_correction": raw}
+               "vdot_estime": estimate["vdot"], "correction_pct": correction, "erreurs_passees": len(past),
+               "application": raw * (1 + correction / 100), "sans_correction": raw,
+               "recalibree": raw * (1 + recal / 100), "questionnaires": raw * (1 + bias / 100)}
         for name, comp in estimate["composantes"].items():
             vdot = comp.get("vdot_estime", comp.get("vdot_deprecie"))
             row[name] = predict_time_s(vdot, p.distance_m) if vdot else np.nan
@@ -62,7 +92,8 @@ def backtest(perf: pd.DataFrame, physio: dict, load: pd.Series | None = None,
     return pd.DataFrame(rows)
 
 
-METHODS = ["application", "sans_correction", "vo2max_montre", "relation_fc_vitesse", "performances", "riegel_derniere"]
+METHODS = ["application", "sans_correction", "recalibree", "questionnaires", "vo2max_montre", "relation_fc_vitesse",
+           "performances", "riegel_derniere"]
 
 
 def metrics(results: pd.DataFrame) -> dict:

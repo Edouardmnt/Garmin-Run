@@ -244,7 +244,15 @@ L'export utilise la bibliothèque non officielle [python-garminconnect](https://
 
 `processing/backtest.py` mesure si les prédictions de temps auraient été justes. Pour chaque performance réelle (course, meilleur 5 ou 10 km d'une séance dure), le niveau est estimé **la veille**, avec les seules données antérieures (VO2 max, relation FC/vitesse, performances, charge, questionnaires), puis comparé au chrono réel. Un test vérifie qu'aucune donnée du jour même ou postérieure ne fuit dans la prédiction : il échoue si l'on en introduit une.
 
-Six méthodes sont comparées : la prédiction affichée, la même sans la correction des questionnaires (pour mesurer son apport), chaque source d'estimation seule, et une référence naïve (formule de Riegel sur la dernière performance). Indicateurs : erreur moyenne en %, biais (prédictions trop optimistes ou trop prudentes), part des prédictions à ±3 %.
+Huit méthodes sont comparées : la prédiction affichée, la même sans aucune correction, avec le seul recalibrage, avec les seuls questionnaires, chaque source d'estimation seule, et une référence naïve (formule de Riegel sur la dernière performance). Indicateurs : erreur moyenne en %, biais (prédictions trop optimistes ou trop prudentes), part des prédictions à ±3 %, et erreur par type de performance.
+
+**Recalibrage appris.** Le premier backtest sur données réelles a montré un biais systématique : des prédictions trop rapides d'environ 9 %, y compris sur les vraies courses. Les temps affichés sont donc corrigés d'après les erreurs passées de Foulée, avec trois garde-fous :
+
+- apprentissage **sur les courses uniquement** : un tempo n'est pas couru à fond, en apprendre rendrait les prédictions de course trop lentes ;
+- correction **prudente** quand les courses sont peu nombreuses (avec n courses, on applique n / (n + 3) de l'écart moyen) et **plafonnée** à ±15 % ;
+- **sans fuite** dans le backtest : chaque performance n'est corrigée qu'avec les erreurs des courses antérieures ; un test le vérifie.
+
+Sans aucune course, la correction déclarée dans les questionnaires prend le relais. Les poids des trois sources d'estimation ne sont pas encore appris : avec une douzaine de performances, on apprendrait le bruit.
 
 ```bash
 python scripts/run_pipeline.py evaluation   # tableau des méthodes, CSV dans data/evaluation, suivi MLflow

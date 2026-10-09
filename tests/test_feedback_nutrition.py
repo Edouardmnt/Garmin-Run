@@ -112,10 +112,15 @@ def test_correction_des_predictions_par_les_questionnaires():
     assert prediction_bias(mixed)[0] == 0
 
 
-def test_les_reponses_modifient_les_temps_predits(data_dir, tmp_path, monkeypatch):
+def test_correction_apprise_appliquee_aux_predictions(data_dir, tmp_path, monkeypatch):
+    """Avec assez de performances passées, les temps affichés sont recalibrés sur les erreurs de Foulée ;
+    sans aucune performance, la correction des questionnaires prend le relais."""
     import importlib
     import json
+    import os
     import shutil
+    import subprocess
+    import sys
 
     from fastapi.testclient import TestClient
 
@@ -123,18 +128,29 @@ def test_les_reponses_modifient_les_temps_predits(data_dir, tmp_path, monkeypatc
 
     data = tmp_path / "data"
     shutil.copytree(data_dir, data)
+    subprocess.run([sys.executable, "scripts/make_run_labels.py"], env={**os.environ, "RUNLAB_DATA_DIR": str(data)},
+                   check=True, capture_output=True)  # étiquettes créées ici : pas de dépendance à l'ordre des tests
     monkeypatch.setenv("RUNLAB_DATA_DIR", str(data))
     importlib.reload(api.main)
     client = TestClient(api.main.app)
-    before = client.get("/predictions", params={"distance": "10k", "ajuster_au_jour": False}).json()
+    with_recal = client.get("/predictions", params={"distance": "10k", "ajuster_au_jour": False}).json()
+    assert with_recal["correction_origine"] == "recalibrage"
+    assert any("erreurs passées" in w for w in with_recal["avertissements"])
+    raw = api.main.predict_time_s(with_recal["vdot"], 10000)
+    expected = raw * (1 + with_recal["correction_questionnaires_pct"] / 100)
+    # VDOT arrondi à 0,1 dans la réponse : tolérance de 0,3 %
+    assert with_recal["predictions"]["10k"]["temps_base_s"] == pytest.approx(expected, rel=0.003)
+
+    # Plus aucune performance étiquetée : repli sur les questionnaires
+    (data / "labels" / "run_labels.csv").unlink(missing_ok=True)
     (data / "feedback").mkdir(exist_ok=True)
-    records = [{"activity_id": 900 + i, "date_sortie": f"2026-09-1{i}", "rpe": 9.5, "label": "course", "douleur": 0,
+    records = [{"activity_id": 900 + i, "date_sortie": f"2026-09-1{i}", "rpe": 3, "label": "ef", "douleur": 0,
                 "reponses": {"prediction": "Trop optimiste"}} for i in range(3)]
     (data / "feedback" / "feedback.jsonl").write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
-    after = client.get("/predictions", params={"distance": "10k", "ajuster_au_jour": False}).json()
-    assert after["correction_questionnaires_pct"] > 0
-    assert after["predictions"]["10k"]["temps_base_s"] > before["predictions"]["10k"]["temps_base_s"]
-    assert any("questionnaires" in w for w in after["avertissements"])
+    monkeypatch.setattr(api.main, "backtest", lambda *a, **k: pd.DataFrame())
+    api.main._correction_for.cache_clear()
+    fallback = client.get("/predictions", params={"distance": "10k", "ajuster_au_jour": False}).json()
+    assert fallback["correction_origine"] == "questionnaires" and fallback["correction_questionnaires_pct"] > 0
     monkeypatch.setenv("RUNLAB_DATA_DIR", str(data_dir))
     importlib.reload(api.main)
 

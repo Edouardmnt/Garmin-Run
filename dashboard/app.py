@@ -725,7 +725,8 @@ def page_planning() -> None:
 
 # --- Prédictions ---------------------------------------------------------------------------------
 
-METHOD_NAMES = {"application": "Foulée (affiché)", "sans_correction": "Sans correction des questionnaires",
+METHOD_NAMES = {"application": "Foulée (affiché)", "sans_correction": "Sans correction",
+                "recalibree": "Recalibrage seul", "questionnaires": "Questionnaires seuls",
                 "vo2max_montre": "VO2 max de la montre", "relation_fc_vitesse": "Relation FC / vitesse",
                 "performances": "Performances seules", "riegel_derniere": "Riegel, dernière performance"}
 
@@ -775,17 +776,23 @@ def prediction_quality() -> None:
     figure(fig, 320)
 
     ranking = sorted(data["methodes"].items(), key=lambda x: x[1]["mape_pct"])
+    races = data["par_source"].get("course")
     points = [f"Sur {data['n']} performances, Foulée se trompe en moyenne de {pct(app_score['mape_pct'])} %, "
               f"et ses prédictions sont {trend} ({pct(bias, sign=True)} %)."]
+    if races:
+        points.append(f"Sur tes {races['n']} course(s), les seuls efforts à fond, l'erreur est de {pct(races['mape_pct'])} % "
+                      f"(biais {pct(races['biais_pct'], sign=True)} %). Les meilleurs 5 et 10 km de séance, courus sans "
+                      "forcer, paraissent toujours plus lents que la prédiction : c'est normal.")
     best = ranking[0]
     if best[0] != "application":
         points.append(f"La méthode la plus juste sur ton historique est « {METHOD_NAMES[best[0]]} » "
                       f"({pct(best[1]['mape_pct'])} % d'erreur) : une piste pour mieux pondérer les estimations.")
     no_corr = data["methodes"].get("sans_correction")
-    if no_corr and data["questionnaires"]["reponses"]:
+    if no_corr:
         gain = no_corr["mape_pct"] - app_score["mape_pct"]
-        points.append(f"La correction tirée de tes questionnaires {'réduit' if gain > 0 else 'ne réduit pas'} l'erreur "
-                      f"({pct(no_corr['mape_pct'])} % sans, {pct(app_score['mape_pct'])} % avec).")
+        points.append(f"Foulée corrige ses prédictions à partir de ses erreurs passées sur tes courses : sans cette correction, "
+                      f"l'erreur serait de {pct(no_corr['mape_pct'])} % (biais {pct(no_corr['biais_pct'], sign=True)} %) ; "
+                      f"elle {'la réduit' if gain > 0 else 'ne la réduit pas'} à {pct(app_score['mape_pct'])} %.")
     riegel = data["methodes"].get("riegel_derniere")
     if riegel:
         better = app_score["mape_pct"] < riegel["mape_pct"]

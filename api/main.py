@@ -7,6 +7,7 @@ Documentation interactive : http://127.0.0.1:8000/docs
 Toutes les réponses sont calculées à la demande à partir des couches silver et gold.
 """
 
+import functools
 import json
 import os
 from datetime import date, timedelta
@@ -19,7 +20,15 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from api.sync import SyncManager
-from processing.backtest import backtest, by_source, metrics, questionnaire_agreement
+from processing.backtest import (
+    MIN_PAST_FOR_RECAL,
+    RECAL_SOURCES,
+    backtest,
+    by_source,
+    metrics,
+    questionnaire_agreement,
+    recalibration,
+)
 from processing.coach import (
     BILAN_PROMPT,
     COACH_MODE,
@@ -158,9 +167,37 @@ def feedback_bias() -> tuple[float, int]:
     return prediction_bias(load_feedback(DATA_DIR))
 
 
+def _data_version() -> tuple:
+    """Dates de modification des fichiers qui influencent les prédictions : la correction n'est recalculée
+    que si l'un d'eux change (après une synchronisation, une étiquette ou un questionnaire)."""
+    files = [DATA_DIR / "gold" / "daily_features.parquet", DATA_DIR / "silver" / "activities.parquet",
+             DATA_DIR / "labels" / "run_labels.csv", DATA_DIR / "feedback" / "feedback.jsonl"]
+    return (str(DATA_DIR), *(f.stat().st_mtime if f.exists() else 0 for f in files))
+
+
+@functools.lru_cache(maxsize=4)
+def _correction_for(version: tuple) -> tuple[float, str, int]:
+    gold, perf, physio = estimation_inputs()
+    results = backtest(perf, physio, chronic_load(gold), load_feedback(DATA_DIR))
+    races = results[results["source"].isin(RECAL_SOURCES)] if len(results) else results
+    if len(races) >= MIN_PAST_FOR_RECAL:
+        return recalibration(races["temps_reel_s"], races["sans_correction"]), "recalibrage", len(races)
+    bias, answers = feedback_bias()
+    return bias, "questionnaires", answers
+
+
+def prediction_correction() -> tuple[float, str, int]:
+    """(correction en %, origine, nombre de points) : recalibrage appris sur les erreurs passées
+    dès 3 performances testées, sinon correction déclarée dans les questionnaires."""
+    try:
+        return _correction_for(_data_version())
+    except HTTPException:
+        return 0.0, "aucune", 0
+
+
 def race_time_s(vdot: float, meters: float, denivele_m: int = 0, bias_pct: float | None = None) -> float:
-    """Temps prédit sur une distance : VDOT, D+ (équivalence de Scarf), correction des questionnaires."""
-    bias = feedback_bias()[0] if bias_pct is None else bias_pct
+    """Temps prédit sur une distance : VDOT, D+ (équivalence de Scarf), correction apprise."""
+    bias = prediction_correction()[0] if bias_pct is None else bias_pct
     return predict_time_s(vdot, flat_equivalent_m(meters, denivele_m)) * (1 + bias / 100)
 
 
@@ -215,7 +252,7 @@ def predictions(
     adj, reasons = day_adjustment(state) if ajuster_au_jour else (0.0, ["Ajustement du jour désactivé"])
     garmin = read_garmin_predictions()
 
-    bias, n_answers = feedback_bias()
+    bias, origin, n_points = prediction_correction()
     if distance_km:
         targets = {"personnalisee": distance_km * 1000}
     else:
@@ -245,15 +282,18 @@ def predictions(
 
     if bias:
         sens = "allongés" if bias > 0 else "raccourcis"
-        warnings.append(f"Temps {sens} de {abs(bias):.1f} % d'après tes réponses aux questionnaires après course "
-                        f"({n_answers} réponse(s) sur la justesse des prédictions).".replace(".", ",", 1))
+        why = (f"d'après les erreurs passées de Foulée sur tes {n_points} course(s), mesurées sans regarder l'avenir"
+               if origin == "recalibrage"
+               else f"d'après tes réponses aux questionnaires après course ({n_points} réponse(s))")
+        warnings.append(f"Temps {sens} de {abs(bias):.1f} % {why}.".replace(".", ",", 1))
     if denivele_m:
         warnings.append(f"D+ de {denivele_m} m converti en distance de plat équivalente (1 m de montée = 7,92 m de plat).")
         warnings.append("La prédiction de la montre suppose un parcours plat.")
     return {
         "vdot": round(estimate["vdot"], 1),
         "denivele_m": denivele_m,
-        "correction_questionnaires_pct": bias,
+        "correction_questionnaires_pct": bias,  # nom conservé pour compatibilité ; voir correction_origine
+        "correction_origine": origin,
         "estimation": estimate["composantes"],
         "ajustement_du_jour_pct": round(adj * 100, 1),
         "explications_ajustement": reasons,
@@ -447,7 +487,7 @@ def suivi_objectif(goal_id: str, semaines: int = Query(12, ge=2, le=52)) -> dict
         raise HTTPException(404, "Objectif introuvable.")
     gold, perf, physio = estimation_inputs()
     today = reference_day(gold)
-    bias = feedback_bias()[0]
+    bias = prediction_correction()[0]
     points = []
     for weeks_ago in range(semaines - 1, -1, -1):
         day = today - timedelta(weeks=weeks_ago)
