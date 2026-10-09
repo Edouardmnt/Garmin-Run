@@ -1,9 +1,8 @@
-# Publie la démo en ligne sur Hugging Face Spaces après chaque push sur main (si le secret HF_TOKEN existe).
+# Publie la variante Docker de la démo sur Hugging Face Spaces, à la demande (onglet Actions > Run workflow).
+# Lancement manuel seulement : les Spaces Docker demandent l'offre PRO. La démo en ligne est sur Streamlit Community Cloud.
 name: Démo Hugging Face
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
