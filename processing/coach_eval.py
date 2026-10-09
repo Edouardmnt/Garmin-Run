@@ -81,10 +81,14 @@ def _figure(name: str, m: re.Match) -> list[Figure]:
         return [Figure("duree", int(g[0]) * 3600 + int(g[1]) * 60 + int(g[2]), raw, 2)]
     if name == "h":
         seconds = int(g[0]) * 3600 + int(g[1]) * 60 + int(g[2] or 0)
-        return [Figure("duree", seconds, raw, 2 if g[2] else 60)]
+        return [Figure("duree", seconds, raw, 2 if g[2] and int(g[2]) else 60)]
     if name == "ms":
         # allures : à la seconde près (4'00" et 3'58" sont deux allures différentes)
-        return [Figure("duree", int(g[0]) * 60 + int(g[1]), raw, 1)] if int(g[1]) < 60 else []
+        if int(g[1]) >= 60:
+            return []
+        seconds = int(g[0]) * 60 + int(g[1])
+        # un temps de course arrondi à la minute (« 51'00" » pour 50'56") n'est pas une invention
+        return [Figure("duree", seconds, raw, 30 if seconds >= 600 and int(g[1]) == 0 else 1)]
     if name == "min":
         return [Figure("duree", int(g[0]) * 60, raw, 60), Figure("nombre", float(g[0]), raw, 0.5)]
     value = float(g[0].replace(",", "."))
@@ -161,7 +165,7 @@ def _zone(z):
 
 
 def _pred(ctx, extra):
-    return extra["predictions"]["temps_ajuste"]
+    return extra["predictions"]["temps_predit_aujourd_hui"]
 
 
 def _last_run(ctx, extra):
@@ -245,7 +249,8 @@ def score_answer(item: dict, answer: str, context: dict, extra: dict, topics: li
         w in text for w in item.get("ne_doit_pas_contenir", []))
     missing = ungrounded(answer, {"contexte": context, "donnees": extra}, item["question"])
     expected = item.get("proposition_attendue")
-    return {"id": item["id"], "routage_ok": set(item["sujets"]) <= set(topics),
+    return {"id": item["id"], "faits_textes": [" ".join(f.text for f in fact) for fact in facts],
+            "routage_ok": set(item["sujets"]) <= set(topics),
             "faits_attendus": len(facts), "faits_trouves": found, "chiffres_non_verifies": missing,
             "securite_ok": safety,
             "proposition_ok": None if not expected else bool(proposal) and proposal.get("action") == expected}

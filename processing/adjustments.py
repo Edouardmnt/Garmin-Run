@@ -303,3 +303,87 @@ def apply_adjustments(plan: dict, adjustments: list[dict], paces: dict, today: d
     if removed:
         plan.setdefault("notes", []).extend(f"Repos décidé avec le coach : {r.split(' : ', 1)[-1]}." for r in removed)
     return plan
+
+
+# --- Secours : la demande explicite de l'utilisateur, quand le modèle n'a pas écrit de proposition -----------
+
+_WEEKDAYS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+_REQUESTS = [  # de la plus spécifique à la plus générale
+    ("deplacer", ("decal", "deplac", "repousse", "reporte", "avance")),
+    ("repos", ("repos", "supprim", "annul", "enleve", "retire", "saute")),
+    ("raccourcir", ("raccourc", "plus court", "moins long", "reduis", "reduire")),
+    ("allonger", ("allong", "plus long", "rallonge")),
+    ("intensifier", ("intensif", "plus dur", "plus intense", "plus rapide")),
+    ("alleger", ("alleg", "plus leger", "plus facile", "plus cool", "tranquille")),
+]
+_KINDS = {"longue": ("sortie longue",), "tempo": ("tempo", "seuil"), "fractionne": ("fraction", "vma", "interval"),
+          "ef": ("footing", "endurance"), "specifique": ("allure course", "specifique")}
+
+
+def _plain(text: str) -> str:
+    table = str.maketrans("àâäéèêëîïôöùûüç", "aaaeeeeiioouuuc")
+    return " " + text.lower().translate(table).replace("’", "'") + " "
+
+
+def _next_weekday(start: date, weekday: int) -> date:
+    return start + timedelta(days=(weekday - start.weekday()) % 7)
+
+
+def fallback_proposal(question: str, plan: dict, today: date) -> dict | None:
+    """Traduit une demande explicite (« décale ma sortie longue à samedi », « repos demain ») en proposition.
+
+    Ne sert qu'en secours : si le modèle a écrit une proposition valide, c'est elle qui compte.
+    Sans verbe de modification clair, ou sans séance identifiable, rien n'est proposé.
+    """
+    text = _plain(question)
+    action = next((a for a, words in _REQUESTS if any(w in text for w in words)), None)
+    if action is None:
+        return None
+    upcoming = [s for s in _sessions(plan) if s["date"] >= today.isoformat() and s["type"] != "course"]
+    if not upcoming:
+        return None
+
+    # La séance visée : type nommé, jour nommé, « demain », « aujourd'hui », sinon la prochaine
+    target_part = re.split(r"\s(?:a|au|vers|pour)\s(?=(?:" + "|".join(_WEEKDAYS) + r"|demain|lendemain))", text)[0] \
+        if action == "deplacer" else text
+    source = None
+    for kind, words in _KINDS.items():
+        if any(w in target_part for w in words):
+            source = next((s for s in upcoming if s["type"] == kind), None)
+            break
+    if source is None:
+        day = None
+        if "aujourd" in target_part or "ce soir" in target_part or "ce matin" in target_part:
+            day = today
+        elif re.search(r"(?<!apres-)(?<!apres )demain", target_part) and "lendemain" not in target_part:
+            day = today + timedelta(days=1)
+        else:
+            named = [i for i, w in enumerate(_WEEKDAYS) if re.search(r"\b" + w + r"\b", target_part)]
+            if named:
+                day = _next_weekday(today, named[0])
+        if day is not None:
+            source = next((s for s in upcoming if s["date"] == day.isoformat()), None)
+            if source is None:
+                return None  # le jour nommé n'a pas de séance : mieux vaut ne rien proposer
+    source = source or upcoming[0]
+    proposal = {"date": source["date"], "action": action, "raison": "Ta demande dans la discussion."}
+
+    if action == "deplacer":
+        start = date.fromisoformat(source["date"])
+        # la destination suit « à / au / vers / pour » ; sans elle, seuls « lendemain » et « veille » sont compris
+        rest = text[len(target_part):] if len(target_part) < len(text) else (
+            text if ("lendemain" in text or "veille" in text) else "")
+        if "lendemain" in rest:
+            new_day = start + timedelta(days=1)
+        elif "veille" in rest:
+            new_day = start - timedelta(days=1)
+        else:
+            named = [i for i, w in enumerate(_WEEKDAYS) if re.search(r"\b" + w + r"\b", rest)]
+            if named:
+                new_day = _next_weekday(today, named[-1])
+            elif "demain" in rest:
+                new_day = today + timedelta(days=1)
+            else:
+                return None  # déplacer, mais où ? le coach doit poser la question
+        proposal["nouvelle_date"] = new_day.isoformat()
+    return proposal

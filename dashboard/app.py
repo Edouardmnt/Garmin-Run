@@ -572,7 +572,8 @@ def proposal_card(adj: dict) -> None:
     status = statuses.get(adj["id"], adj["statut"])
     alerts = "".join(f"<li>{esc(w)}</li>" for w in adj.get("avertissements", []))
     reason = f'<p class="prop-raison">{esc(adj["raison"])}</p>' if adj.get("raison") else ""
-    st.markdown(f"""<div class="proposition"><div class="prop-tete">Proposition du coach</div>
+    head = "D'après ta demande" if adj.get("origine") == "demande" else "Proposition du coach"
+    st.markdown(f"""<div class="proposition"><div class="prop-tete">{head}</div>
         <p class="prop-libelle">{esc(adj["libelle"])}</p>{reason}
         <div class="prop-avant-apres"><div><span>Avant</span>{session_line(adj["avant"])}</div>
         <div class="prop-fleche">→</div><div><span>Après</span>{session_line(adj["apres"])}</div></div>

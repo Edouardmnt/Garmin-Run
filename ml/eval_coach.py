@@ -12,7 +12,7 @@ import argparse
 import json
 import time
 
-from api.main import DATA_DIR, coach_context, coach_fetchers
+from api.main import DATA_DIR, coach_context, coach_fetchers, resolve_proposal
 from ml.backtest_predictions import git_commit
 from ml.tracking import get_mlflow
 from processing.coach import OllamaLLM, answer_direct, gather_topic_data, get_llm
@@ -26,7 +26,12 @@ def evaluate(llm, items: list[dict]) -> tuple[list[dict], list[dict]]:
         topics, extra = gather_topic_data(item["question"], fetchers)
         start = time.time()
         answer = answer_direct(llm, item["question"], context, fetchers)
-        score = score_answer(item, answer["reponse"], context, extra, topics, answer.get("proposition_brute"))
+        raw = answer.get("proposition_brute")
+        final, _ = resolve_proposal(raw, item["question"]) if item.get("proposition_attendue") else (None, None)
+        score = score_answer(item, answer["reponse"], context, extra, topics, final)
+        if item.get("proposition_attendue"):  # la part du modèle seul, sans le secours par mots-clés
+            score["proposition_du_modele"] = bool(final and final.get("origine") == "coach")
+            score["proposition_brute"] = raw
         score["duree_s"] = round(time.time() - start, 1)
         scores.append(score)
         answers.append({"id": item["id"], "question": item["question"], "reponse": answer["reponse"], **score})
@@ -50,19 +55,32 @@ def main() -> None:
     llm = OllamaLLM(model=args.modele) if args.modele else get_llm()
     print(f"Évaluation du coach ({llm.model}) sur {len(items)} questions :\n")
     scores, answers = evaluate(llm, items)
-    summary = summarize(scores) | {"modele": llm.model, "commit": git_commit(),
+    by_model = [s["proposition_du_modele"] for s in scores if "proposition_du_modele" in s]
+    summary = summarize(scores) | {"propositions_modele_pct": round(sum(by_model) / len(by_model) * 100)
+                                   if by_model else None, "modele": llm.model, "commit": git_commit(),
                                    "duree_moyenne_s": round(sum(s["duree_s"] for s in scores) / len(scores), 1)}
 
     print(f"\nRoutage des données       : {summary['routage_pct']} %")
     print(f"Faits attendus cités      : {summary['rappel_faits_pct']} %")
     print(f"Réponses sans chiffre non vérifiable : {summary['reponses_sans_chiffre_invente_pct']} %")
     print(f"Règles de sécurité        : {summary['securite_pct']} %")
-    print(f"Propositions de modification attendues bien formulées : {summary['propositions_pct']} %")
+    print(f"Modifications demandées bien proposées : {summary['propositions_pct']} %"
+          f" (dont écrites par le modèle lui-même : {summary.get('propositions_modele_pct')} %)")
     print(f"Durée moyenne par réponse : {summary['duree_moyenne_s']} s")
     for a in answers:
-        if a["chiffres_non_verifies"] or not a["securite_ok"]:
-            print(f"\n[{a['id']}] {a['question']}\n  non vérifiés : {', '.join(a['chiffres_non_verifies']) or '-'}"
-                  f"{'' if a['securite_ok'] else '   (règle de sécurité non respectée)'}\n  {a['reponse'][:400]}")
+        problems = []
+        if a["chiffres_non_verifies"]:
+            problems.append("non vérifiés : " + ", ".join(a["chiffres_non_verifies"]))
+        if not a["securite_ok"]:
+            problems.append("règle de sécurité non respectée")
+        if a["faits_trouves"] < a["faits_attendus"]:
+            problems.append(f"faits attendus : {', '.join(a.get('faits_textes', []))}")
+        if a.get("proposition_ok") is False:
+            problems.append(f"proposition attendue non obtenue (écrite par le modèle : {a.get('proposition_brute')})")
+        elif a.get("proposition_du_modele") is False:
+            problems.append("proposition obtenue grâce au secours par mots-clés, pas par le modèle")
+        if problems:
+            print(f"\n[{a['id']}] {a['question']}\n  " + "\n  ".join(problems) + f"\n  {a['reponse'][:400]}")
 
     out = DATA_DIR / "evaluation"
     out.mkdir(parents=True, exist_ok=True)

@@ -226,3 +226,39 @@ def test_exercices_pour_une_douleur(api):
     data = json.loads(body.split("[[EXERCICES]] ")[1].splitlines()[0])
     assert data["zones"][0]["id"] == "genou_exterieur" and data["signaux_alerte"]
     assert client.get("/coach/exercices", params={"question": "mal au tibia"}).json()["zones"][0]["id"] == "tibia"
+
+
+# --- Secours par mots-clés -------------------------------------------------------------------------
+
+@pytest.mark.parametrize("question, expected", [
+    ("Supprime ma prochaine séance et remplace-la par du repos.", {"date": "2026-10-06", "action": "repos"}),
+    ("Je ne peux pas courir à ma prochaine séance, décale-la au lendemain.",
+     {"date": "2026-10-06", "action": "deplacer", "nouvelle_date": "2026-10-07"}),
+    ("décale ma sortie longue à samedi", {"date": "2026-10-11", "action": "deplacer", "nouvelle_date": "2026-10-10"}),
+    ("déplace la sortie longue de dimanche à samedi",
+     {"date": "2026-10-11", "action": "deplacer", "nouvelle_date": "2026-10-10"}),
+    ("Je suis crevé, tu peux alléger ma prochaine séance ?", {"date": "2026-10-06", "action": "alleger"}),
+    ("repos demain", {"date": "2026-10-06", "action": "repos"}),
+    ("raccourcis mon tempo", {"date": "2026-10-13", "action": "raccourcir"}),
+    ("allège jeudi", {"date": "2026-10-08", "action": "alleger"}),
+    ("décale ma séance de mardi", None),        # déplacer, mais où ? le coach doit demander
+    ("repos mercredi", None),                   # pas de séance mercredi : rien à proposer
+    ("Quelle allure pour mon footing ?", None),  # aucune demande de modification
+])
+def test_demande_explicite_comprise(question, expected):
+    from processing.adjustments import fallback_proposal
+
+    found = fallback_proposal(question, plan(), TODAY)
+    if expected is None:
+        assert found is None
+    else:
+        assert {k: found[k] for k in expected} == expected
+
+
+def test_secours_quand_le_modele_n_ecrit_pas_de_proposition(api):
+    _, client = api
+    body = ask(client, "Raccourcis ma prochaine séance s'il te plaît")  # le faux modèle n'écrit aucune proposition
+    adj = json.loads(body.split("[[PROPOSITION]] ")[1].splitlines()[0])
+    assert adj["action"] == "raccourcir" and adj["origine"] == "demande"
+    body = ask(client, "Je suis crevé, allège ma prochaine séance")  # ici, c'est le modèle qui propose
+    assert json.loads(body.split("[[PROPOSITION]] ")[1].splitlines()[0])["origine"] == "coach"

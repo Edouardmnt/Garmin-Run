@@ -129,3 +129,8 @@ def test_point_d_acces_de_verification(api):
     assert said["fiable"]
     bilan = client.post("/coach/verification", json={"bilan": True, "reponse": "Bonne semaine."}).json()
     assert bilan["fiable"] and bilan["chiffres_cites"] == 0
+
+
+def test_temps_de_course_arrondi_a_la_minute():
+    assert ungrounded("Vise 51'00\" sur 10 km.", {"temps": "50'56\""}) == []
+    assert ungrounded("Cours à 4'00\"/km.", {"allure": "3'58\"/km"}) == ["4'00\""]  # une allure reste à la seconde

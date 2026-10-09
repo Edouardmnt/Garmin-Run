@@ -269,6 +269,8 @@ Dans la discussion, demande par exemple « décale ma sortie longue à samedi »
 3. une carte « Avant → Après » s'affiche, avec **Valider** et **Refuser** ;
 4. une fois validée, le planning est recalculé (onglet Planning : « Modifiée avec ton coach », avec un bouton **Annuler**). Si la séance du jour change, **la montre est mise à jour aussitôt**.
 
+Si le modèle oublie d'écrire sa proposition alors que tu as clairement demandé une modification (« repos demain », « décale ma sortie longue à samedi »), un secours par mots-clés la construit quand même. L'évaluation mesure les deux : ce que le modèle fait seul, et ce que l'application obtient au final.
+
 Actions possibles : déplacer, alléger (séance dure → footing facile), intensifier (footing → bloc tempo), raccourcir ou allonger (facteur borné), repos. Les ajustements sont enregistrés dans `data/planning/ajustements.json`. Points d'accès : `GET/POST /planning/ajustements`, `POST /planning/ajustements/{id}/valider | refuser | annuler`.
 
 **Douleurs.** Quand tu parles d'une douleur (genou, tibia, mollet, tendon d'Achille, pied, hanche, ischio-jambiers, dos), le coach ne pose aucun diagnostic. Il s'appuie sur une base d'exercices fixe et relue (`processing/rehab.py`), et non sur ce que le modèle « croit savoir ». Il affiche :

@@ -23,6 +23,7 @@ from api.sync import SyncManager
 from processing.adjustments import (
     MarkerFilter,
     apply_adjustments,
+    fallback_proposal,
     load_adjustments,
     parse_proposal,
     save_adjustments,
@@ -665,18 +666,42 @@ def seances(limite: int = Query(10, ge=1, le=100)) -> dict:
 
 # --- Ajustements du planning proposés par le coach -----------------------------------------------
 
-def register_proposal(raw: dict | None) -> tuple[dict | None, str | None]:
-    """Vérifie et enregistre une proposition du coach (statut « propose ») ; rien ne change avant validation."""
-    if not raw:
-        return None, None
+def resolve_proposal(raw: dict | None, question: str | None = None) -> tuple[dict | None, str | None]:
+    """Proposition du modèle vérifiée ; à défaut, la demande explicite de l'utilisateur (secours par mots-clés).
+
+    Un petit modèle oublie parfois d'écrire sa proposition, ou se trompe de date : si tu as clairement demandé
+    une modification (« repos demain », « décale ma sortie longue à samedi »), elle t'est quand même proposée.
+    """
     gold = read_parquet("gold/daily_features.parquet")
     goal = active_goal(DATA_DIR, reference_day(gold))
     plan = planning_actif()
-    adjustment, error = validate_adjustment(raw, plan, today_date(), set(plan.get("jours_tennis", [])),
-                                 plan["verdict_du_jour"]["niveau"], plan.get("allures_plan", {}))
+    today = today_date()
+
+    def check(candidate):
+        return validate_adjustment(candidate, plan, today, set(plan.get("jours_tennis", [])),
+                                   plan["verdict_du_jour"]["niveau"], plan.get("allures_plan", {}))
+
+    adjustment, error = check(raw) if raw else (None, None)
+    if adjustment is not None:
+        adjustment["origine"] = "coach"
+    elif question:
+        fallback = fallback_proposal(question, plan, today)
+        if fallback:
+            adjustment, fallback_error = check(fallback)
+            if adjustment is not None:
+                adjustment["origine"] = "demande"
+            error = error or fallback_error
+    if adjustment is not None:
+        adjustment["objectif"] = None if goal is None else goal["id"]
+        return adjustment, None
+    return None, error
+
+
+def register_proposal(raw: dict | None, question: str | None = None) -> tuple[dict | None, str | None]:
+    """Vérifie et enregistre une proposition (statut « propose ») ; rien ne change avant validation."""
+    adjustment, error = resolve_proposal(raw, question)
     if adjustment is None:
         return None, error
-    adjustment["objectif"] = None if goal is None else goal["id"]
     items = [a for a in load_adjustments(DATA_DIR) if not (a["statut"] == "propose" and a["date"] == adjustment["date"])]
     save_adjustments(DATA_DIR, items + [adjustment])  # une nouvelle proposition remplace l'ancienne sur la même séance
     return adjustment, None
@@ -808,8 +833,10 @@ def coach_fetchers() -> dict:
         p = predictions(distance=race.get("distance", "10k"), ajuster_au_jour=True, denivele_m=0,
                         distance_km=race.get("distance_km"))
         key, pred = next(iter(p["predictions"].items()))
-        return {"distance": key if key != "personnalisee" else f"{race['distance_km']} km",
-                **{k: pred[k] for k in ("temps_ajuste", "temps_plat", "allure_course", "prediction_montre")},
+        # noms explicites : un petit modèle confond facilement allure de course et allure d'entraînement
+        return {"course_visee": key if key != "personnalisee" else f"{race['distance_km']} km",
+                "temps_predit_aujourd_hui": pred["temps_ajuste"], "allure_de_course": pred["allure_course"],
+                "temps_predit_sur_le_plat": pred["temps_plat"], "prediction_de_la_montre": pred["prediction_montre"],
                 "vdot": p["vdot"], "avertissements": p["avertissements"][:2]}
 
     def nutrition_(q):
@@ -850,7 +877,7 @@ def ask_coach(message: str, history: list[dict] | None = None) -> dict:
         if COACH_MODE == "outils":
             return run_coach(llm, message, coach_context(), coach_tools(), history)
         answer = answer_direct(llm, message, coach_context(), coach_fetchers(), history)
-        proposal, error = register_proposal(answer.pop("proposition_brute"))
+        proposal, error = register_proposal(answer.pop("proposition_brute"), message)
         answer.pop("texte_complet", None)
         return {**answer, "proposition": proposal, "proposition_refusee": error}
     except requests.RequestException as exc:
@@ -907,7 +934,7 @@ def question_coach_flux(question: str = Body("", embed=True), historique: list[d
             yield rest
         if stats:
             yield "\n[[MESURES]] " + json.dumps(stats)
-        proposal, error = register_proposal(parse_proposal(hidden.hidden))
+        proposal, error = register_proposal(parse_proposal(hidden.hidden), None if bilan else asked)
         if proposal:
             yield "\n[[PROPOSITION]] " + json.dumps(proposal, ensure_ascii=False)
         elif error:
