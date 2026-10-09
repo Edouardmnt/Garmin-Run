@@ -259,3 +259,10 @@ h3 { font-size: 1rem !important; font-weight: 600 !important; }
   border: 1px solid var(--filet); color: var(--gris);
 }
 .ajustement-ligne { margin: 0; font-size: .92rem; }
+
+/* Démo en ligne */
+.demo-bandeau {
+  text-align: center; font-size: .82rem; color: var(--gris); border: 1px solid var(--filet); border-radius: 999px;
+  padding: .3rem 1rem; margin: 0 auto .6rem; max-width: 760px;
+}
+.demo-bandeau a { color: inherit; text-decoration: underline; }

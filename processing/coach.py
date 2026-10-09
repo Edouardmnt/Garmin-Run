@@ -169,8 +169,128 @@ class FakeLLM:
         return {"disponible": True, "modele": self.model, "url": "local", "erreur": None}
 
 
+class DemoLLM:
+    """Mode démo en ligne (sans Ollama) : réponses rédigées par des règles, avec les seules données reçues.
+
+    Ce n'est pas un modèle de langage, et l'interface le dit. Il montre tout le reste du coach en
+    fonctionnement réel : choix des données, vérification des chiffres, propositions de modification
+    validées par l'utilisateur, exercices pour une douleur.
+    """
+
+    model = "démo : réponses par règles, sans modèle de langage"
+
+    @staticmethod
+    def _data(messages: list[dict]) -> tuple[dict, dict]:
+        system = next(m["content"] for m in messages if m["role"] == "system")
+        body = system.split("CONTEXTE (données de l'utilisateur, à jour) :", 1)[-1]
+        context_txt, _, extra_txt = body.partition("DONNÉES UTILES : ")
+        try:
+            context = json.loads(context_txt.strip())
+        except json.JSONDecodeError:
+            context = {}
+        try:
+            extra = json.loads(extra_txt.strip()) if extra_txt else {}
+        except json.JSONDecodeError:
+            extra = {}
+        return context, extra
+
+    def answer(self, messages: list[dict]) -> str:
+        from processing.adjustments import requested_action
+
+        context, extra = self._data(messages)
+        question = _normalize(next(m["content"] for m in reversed(messages) if m["role"] == "user"))
+        upcoming = context.get("prochaines_seances") or []
+        parts = []
+        try:
+            if "douleur" in extra:
+                pain = extra["douleur"]
+                parts.append("Je ne peux pas poser de diagnostic, mais voici ce qui est souvent proposé.")
+                for zone in pain.get("zones", [])[:1]:
+                    exercises = ", ".join(f"{e['nom'].lower()} ({e['dosage']})" for e in zone["exercices"][:2])
+                    parts.append(f"Pour la zone « {zone['nom'].lower()} » : {exercises}. {zone['course']}")
+                    parts.append(f"Si la gêne dure plus d'une à deux semaines, consulte un {zone['specialiste']}.")
+                if not pain.get("zones"):
+                    parts.append("Dis-moi où tu as mal pour que je te propose des exercices adaptés.")
+                parts.append(f"Consulte rapidement en cas de {', '.join(pain['signaux_alerte'][:2])}.")
+                hard = next((x for x in upcoming if x.get("type") in ("fractionne", "tempo", "specifique", "longue")),
+                            None)
+                if hard:
+                    parts.append(f"Je te propose d'alléger ta prochaine séance dure ({hard['titre'].lower()} du "
+                                 f"{hard['jour'].lower()}) : valide ci-dessous si tu es d'accord.")
+                    parts.append("\n[[PROPOSITION]] " + json.dumps({"date": hard["date"], "action": "alleger",
+                                                                    "raison": "Douleur signalée."}))
+            elif requested_action(question) and "planning" in extra:
+                parts.append("C'est noté. Voici la modification que je te propose : tu peux la valider ou la refuser "
+                             "juste en dessous, rien ne change sans ton accord.")
+            elif "bilan" in question:
+                verdict = context["verdict_du_jour"]
+                analyses = context.get("analyses", {})
+                parts += [f"{verdict['titre']} aujourd'hui ({verdict['score']} sur 100) : {verdict['explication']}",
+                          analyses.get("charge", ""), analyses.get("sommeil", ""), analyses.get("stress", "")]
+                if upcoming:
+                    s = upcoming[0]
+                    parts.append(f"Prochaine séance : {s['titre'].lower()} le {s['jour'].lower()}, à {s['allure']}.")
+            elif "predictions" in extra:
+                pred = extra["predictions"]
+                parts.append(f"Aujourd'hui, ton temps prédit sur {pred['course_visee']} est de "
+                             f"{pred['temps_predit_aujourd_hui']}, soit {pred['allure_de_course']} au kilomètre.")
+                parts += pred.get("avertissements", [])[:1]
+            elif "allures" in extra:
+                zones = extra["allures"]["zones"]
+                ef = zones.get("ef", {})
+                parts.append(f"En endurance fondamentale, vise {ef.get('allure')}"
+                             + (f", avec une FC entre {ef['fc_cible'][0]} et {ef['fc_cible'][1]} bpm." if ef.get(
+                                 "fc_cible") else "."))
+                if "tempo" in zones:
+                    parts.append(f"En tempo : {zones['tempo']['allure']}.")
+                if "fractionne" in zones:
+                    parts.append(f"En fractionné : {zones['fractionne']['allure']}.")
+            elif "nutrition" in extra:
+                n = extra["nutrition"]
+                low, high = n["glucides_g_par_heure"]
+                drink_low, drink_high = n["boisson_ml_par_heure"]
+                parts.append(f"Pour une course d'environ {n['temps_prevu']}, prévois {low} à {high} g de glucides "
+                             f"et {drink_low} à {drink_high} ml de boisson par heure.")
+                parts += n.get("pendant", [])[:1]
+            elif "seances" in extra and extra["seances"].get("dernieres"):
+                r = extra["seances"]["dernieres"][0]
+                parts.append(f"Ta dernière sortie : {r['distance_km']} km à {r['allure']} de moyenne"
+                             + (f", FC moyenne {r['fc_moyenne']:.0f} bpm" if r.get("fc_moyenne") else "")
+                             + f" (séance de type {r['type']}).")
+            elif "planning" in extra and extra["planning"].get("prochaines"):
+                s = extra["planning"]["prochaines"][0]
+                parts.append(f"Ta prochaine séance : {s['titre'].lower()} le {s['jour'].lower()}, "
+                             f"{s['distance_km']} km à {s['allure']}.")
+            else:
+                verdict = context["verdict_du_jour"]
+                parts.append(f"{verdict['titre']} ({verdict['score']} sur 100) : {verdict['explication']}")
+                parts.append(context.get("analyses", {}).get("sommeil", ""))
+        except (KeyError, IndexError, TypeError):
+            parts = ["Je n'ai pas assez de données pour répondre précisément à cette question."]
+        return " ".join(p for p in parts if p).replace(" \n", "\n")
+
+    def stream(self, messages: list[dict]):
+        import time
+
+        for word in self.answer(messages).split(" "):
+            time.sleep(0.015)  # effet de rédaction, comme avec un vrai modèle
+            yield word + " "
+        yield {"duree_s": None, "jetons": None, "jetons_par_s": None, "contexte_jetons": None}
+
+    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+        return {"role": "assistant", "content": self.answer(messages)}
+
+    def status(self) -> dict:
+        return {"disponible": True, "modele": self.model, "url": "local", "erreur": None}
+
+
 def get_llm():
-    return FakeLLM() if os.getenv("RUNLAB_LLM") == "fake" else OllamaLLM()
+    choice = os.getenv("RUNLAB_LLM")
+    if choice == "fake":
+        return FakeLLM()
+    if choice == "demo":
+        return DemoLLM()
+    return OllamaLLM()
 
 
 # --- Contexte et boucle d'outils -------------------------------------------------------------------

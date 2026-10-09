@@ -329,6 +329,12 @@ def _next_weekday(start: date, weekday: int) -> date:
     return start + timedelta(days=(weekday - start.weekday()) % 7)
 
 
+def requested_action(question: str) -> str | None:
+    """Modification explicitement demandée dans la question (« décale », « repos », « allège »...), ou None."""
+    text = _plain(question)
+    return next((a for a, words in _REQUESTS if any(w in text for w in words)), None)
+
+
 def fallback_proposal(question: str, plan: dict, today: date) -> dict | None:
     """Traduit une demande explicite (« décale ma sortie longue à samedi », « repos demain ») en proposition.
 
@@ -336,7 +342,7 @@ def fallback_proposal(question: str, plan: dict, today: date) -> dict | None:
     Sans verbe de modification clair, ou sans séance identifiable, rien n'est proposé.
     """
     text = _plain(question)
-    action = next((a for a, words in _REQUESTS if any(w in text for w in words)), None)
+    action = requested_action(question)
     if action is None:
         return None
     upcoming = [s for s in _sessions(plan) if s["date"] >= today.isoformat() and s["type"] != "course"]

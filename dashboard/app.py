@@ -16,7 +16,9 @@ import requests
 import streamlit as st
 
 API_URL = os.getenv("RUNLAB_API_URL", "http://127.0.0.1:8000")
-AUTO_SYNC = os.getenv("RUNLAB_AUTO_SYNC", "1") == "1"  # synchronisation à l'ouverture si les données ont vieilli
+DEMO = os.getenv("RUNLAB_DEMO") == "1"  # démo en ligne : données synthétiques, ni Garmin ni Ollama
+REPO_URL = "https://github.com/Edouardmnt/Garmin-Run"
+AUTO_SYNC = os.getenv("RUNLAB_AUTO_SYNC", "1") == "1" and not DEMO  # synchronisation à l'ouverture si les données ont vieilli
 AUTO_SYNC_AFTER_MIN = 30
 SLOW_SYNC_S = 90  # au-delà, on explique que l'attente vient de Garmin
 DISTANCES = {"5 km": "5k", "10 km": "10k", "Semi": "semi", "Marathon": "marathon"}
@@ -241,6 +243,9 @@ def watch_block() -> None:
     status = (f"Déjà dans ton calendrier Garmin : {sent['titre']}." if sent
               else "Pas encore envoyée. Elle part automatiquement chaque matin à 6 h si le cluster tourne.")
     left.markdown(resume(f"Séance du jour : {session['titre']}", status), unsafe_allow_html=True)
+    if DEMO:
+        right.caption("Démo : dans le projet, la séance part chaque matin sur la montre Garmin.")
+        return
     if right.button("Envoyer sur ma montre", use_container_width=True):
         ok, body = post("/montre/envoyer", {})
         if ok:
@@ -641,9 +646,15 @@ def page_coach() -> None:
         st.toast(st.session_state.pop("toast"))
     status = get("/coach/statut") or {}
     st.title("Ton coach")
-    st.markdown(f'<p class="mention-ia">Intelligence artificielle : modèle {esc(status.get("modele", "local"))}, '
-                "exécuté sur ta machine. Tes données ne la quittent pas. Ses conseils ne remplacent pas l'avis d'un "
-                "professionnel de santé, et il ne modifie rien à ta place.</p>", unsafe_allow_html=True)
+    if DEMO:
+        st.markdown('<p class="mention-ia">Démo en ligne : le coach répond ici par des <b>règles</b>, à partir des '
+                    "seules données, sans modèle de langage. Dans le projet, c'est un modèle local (Ollama, "
+                    "qwen2.5) ; tout le reste est réel : choix des données, vérification des chiffres, propositions "
+                    "de modification à valider, exercices pour une douleur.</p>", unsafe_allow_html=True)
+    else:
+        st.markdown(f'<p class="mention-ia">Intelligence artificielle : modèle {esc(status.get("modele", "local"))}, '
+                    "exécuté sur ta machine. Tes données ne la quittent pas. Ses conseils ne remplacent pas l'avis d'un "
+                    "professionnel de santé, et il ne modifie rien à ta place.</p>", unsafe_allow_html=True)
     if not status.get("disponible"):
         model = esc(status.get("modele", ""))
         st.markdown(f'<div class="donnees" style="margin-top:1rem"><h4>Coach indisponible</h4><p>'
@@ -1245,6 +1256,9 @@ def sync_status_line() -> None:
     status = fresh_status()
     if not status:
         return
+    if DEMO:
+        st.markdown('<p class="age-donnees">Données synthétiques de démonstration</p>', unsafe_allow_html=True)
+        return
     if status.get("en_cours"):
         st.session_state["synchro_suivie"] = True
         step = status.get("etape") or "Finalisation"
@@ -1292,6 +1306,10 @@ PAGES = {"Accueil": page_home, "Coach": page_coach, "Objectifs": page_goals, "Pl
          "Allures": page_paces, "Séances": page_sessions}
 
 st.markdown('<div class="marque">Foulée</div>', unsafe_allow_html=True)
+if DEMO:
+    st.markdown(f'<div class="demo-bandeau">Démo en ligne · données <b>synthétiques</b> générées pour l\'exemple, '
+                f'aucune donnée réelle. <a href="{REPO_URL}" target="_blank">Code et explications sur GitHub</a></div>',
+                unsafe_allow_html=True)
 sync_header()
 choice = st.radio("Navigation", list(PAGES), horizontal=True, label_visibility="collapsed", key="page")
 PAGES[choice]()

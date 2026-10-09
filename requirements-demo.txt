@@ -1,0 +1,9 @@
+# Démo en ligne (Hugging Face Spaces) : pas de Garmin, pas d'Ollama, pas de MLflow
+pandas
+pyarrow
+scikit-learn
+fastapi
+httpx
+streamlit
+plotly
+requests
