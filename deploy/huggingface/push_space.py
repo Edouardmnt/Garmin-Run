@@ -4,7 +4,7 @@
     python deploy/huggingface/push_space.py --space edouardmnt04/foulee
 
 Copie uniquement le code utile à la démo (jamais data/), place le Dockerfile et la fiche du Space à la racine,
-puis envoie le tout. Le workflow GitHub .github/workflows/space.yml fait la même chose à chaque push sur main.
+puis envoie le tout. Les Spaces Docker demandent l'offre PRO ; la démo en ligne est sur Streamlit Community Cloud.
 """
 
 import argparse
