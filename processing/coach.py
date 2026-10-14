@@ -455,8 +455,8 @@ def answer_direct(llm, user_message: str, context: dict, fetchers: dict, history
 
 RUN_PROMPT = """Commente ma sortie analysée dans DONNÉES UTILES, comme un coach qui me connaît, en 6 à 10 phrases :
 1. ce qui s'est bien passé, chiffres à l'appui ;
-2. les points d'attention (allure, dérive cardiaque, zones, dénivelé), en tenant compte de ma nuit précédente,
-   de mon ressenti déclaré et de mon objectif ;
+2. les points d'attention (allure, dérive cardiaque, zones, dénivelé, chaleur), en tenant compte de ma nuit
+   précédente, de la météo pendant la sortie, de mon ressenti déclaré et de mon objectif ;
 3. un conseil concret et chiffré pour ma prochaine séance du même type.
 Compare avec mes sorties similaires quand c'est utile. Parle des allures équivalentes sur le plat quand le
 parcours était vallonné. N'invente aucun chiffre absent des données."""

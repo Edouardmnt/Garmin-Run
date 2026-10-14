@@ -12,7 +12,8 @@ from ml.tracking import get_mlflow
 from processing.backtest import backtest, by_source, metrics, questionnaire_agreement, recalibration
 from processing.feedback import load_feedback
 
-NAMES = {"application": "Application", "sans_correction": "Sans correction", "recalibree": "Recalibrage seul",
+NAMES = {"application": "Application", "sans_meteo": "Application sans la météo",
+         "sans_correction": "Sans correction", "recalibree": "Recalibrage seul",
          "questionnaires": "Questionnaires seuls",
          "vo2max_montre": "VO2 max de la montre", "relation_fc_vitesse": "Relation FC / vitesse",
          "performances": "Performances seules", "riegel_derniere": "Riegel (dernière perf.)"}

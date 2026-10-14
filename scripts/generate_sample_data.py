@@ -23,6 +23,47 @@ SEED = 42  # même graine = mêmes données à chaque exécution (reproductible)
 HR_REST, HR_MAX = 50, 190
 
 
+# Météo synthétique (générateur séparé : les autres données restent identiques d'une version à l'autre)
+HOME = (48.85, 2.35)  # point de départ fictif, en Île-de-France
+MONTHLY_MEAN_C = {1: 5, 2: 6, 3: 9, 4: 12, 5: 16, 6: 19, 7: 21, 8: 21, 9: 17, 10: 13, 11: 8, 12: 5}
+HEAT_HR_BPM_PER_C = 0.8  # au-delà de 15 °C, la FC monte à allure égale (dérive cardiaque liée à la chaleur)
+
+
+def synthetic_hours(start: datetime, duration_s: float, rng: random.Random) -> list[dict]:
+    """Relevés horaires plausibles autour d'une sortie : saison, heure de la journée, humidité, vent."""
+    day_offset = rng.gauss(0, 3)
+    hours, t = [], start.replace(minute=0, second=0)
+    while t <= start + timedelta(seconds=duration_s):
+        temp = MONTHLY_MEAN_C[t.month] + day_offset + 4 * math.sin((t.hour - 9) / 24 * 2 * math.pi)
+        humidity = max(30, min(98, 92 - 2.2 * (temp - 5) + rng.gauss(0, 6)))
+        a, b = 17.27, 237.7
+        gamma = a * temp / (b + temp) + math.log(humidity / 100)
+        hours.append({"time": t.strftime("%Y-%m-%dT%H:00"), "temperature_2m": round(temp, 1),
+                      "relative_humidity_2m": round(humidity), "dew_point_2m": round(b * gamma / (a - gamma), 1),
+                      "apparent_temperature": round(temp + 0.1 * (humidity - 60) / 10, 1),
+                      "wind_speed_10m": round(abs(rng.gauss(10, 5)), 1),
+                      "precipitation": round(max(0.0, rng.gauss(-0.5, 0.6)), 1)})
+        t += timedelta(hours=1)
+    return hours
+
+
+def add_weather(activities: list[dict], out_dir: Path) -> None:
+    """Position de départ et météo des sorties en extérieur, au format de ingestion/weather_export.py."""
+    rng = random.Random(SEED + 1)
+    (out_dir / "weather").mkdir(parents=True, exist_ok=True)
+    for act in activities:
+        if act["activityType"]["typeKey"] != "running":
+            continue
+        act["startLatitude"] = round(HOME[0] + rng.uniform(-0.03, 0.03), 5)
+        act["startLongitude"] = round(HOME[1] + rng.uniform(-0.03, 0.03), 5)
+        hours = synthetic_hours(datetime.fromisoformat(act["startTimeLocal"]), act["duration"], rng)
+        heat = max(0.0, sum(h["temperature_2m"] for h in hours) / len(hours) - 15)
+        act["averageHR"] = round(act["averageHR"] + HEAT_HR_BPM_PER_C * heat)
+        record = {"activityId": act["activityId"], "source": "synthetique", "latitude": HOME[0],
+                  "longitude": HOME[1], "hourly": hours}
+        (out_dir / "weather" / f"{act['activityId']}.json").write_text(json.dumps(record), encoding="utf-8")
+
+
 def make_activity(activity_id: int, day: date, sport: str) -> dict:
     """Une activité au format de la liste d'activités Garmin."""
     if sport == "tennis_v2":
@@ -183,6 +224,7 @@ def main() -> None:
         }
         (OUT_DIR / "daily" / f"{day.isoformat()}.json").write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
 
+    add_weather(activities, OUT_DIR)
     (OUT_DIR / "activities.json").write_text(json.dumps(activities, ensure_ascii=False, indent=2), encoding="utf-8")
     (OUT_DIR / "splits").mkdir(parents=True, exist_ok=True)
     for act in activities:

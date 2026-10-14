@@ -26,7 +26,7 @@ local** dont chaque chiffre est vérifié.
 **Ce que fait l'application**
 
 - **Données** : synchronisation Garmin incrémentale toutes les 3 heures, data lake bronze → silver → gold, indicateurs d'entraînement (TRIMP, charge aiguë et chronique, fraîcheur).
-- **Prédictions** : temps sur 5 km à marathon (dénivelé et forme du jour compris), **backtestés sans fuite** et recalibrés sur mes erreurs passées.
+- **Prédictions** : temps sur 5 km à marathon (dénivelé, forme du jour et **météo prévue** compris), **backtestés sans fuite** et recalibrés sur mes erreurs passées.
 - **Planning** : plan jusqu'à l'objectif (phases, jours de tennis, forme du jour) ; la séance du jour part chaque matin sur la montre.
 - **Coach IA local** (Ollama) : répond avec mes données, **propose** des modifications du planning que je valide d'un clic, oriente vers un professionnel en cas de douleur avec des exercices issus d'une base relue.
 - **Boucle de qualité** : questionnaire après chaque sortie, évaluation automatique des prédictions et du coach, suivie dans MLflow.
@@ -35,7 +35,7 @@ local** dont chaque chiffre est vérifié.
 
 | Domaine | Dans Foulée |
 |---|---|
-| Data engineering | Architecture en médaillon, ingestion incrémentale (*watermark*), Parquet, écritures atomiques pour lire pendant la synchronisation |
+| Data engineering | Architecture en médaillon, ingestion incrémentale (*watermark*), enrichissement par une API publique (météo Open-Meteo), Parquet, écritures atomiques |
 | ML et évaluation | Validation temporelle (*walk-forward*), références naïves, backtest sans fuite testé par mutation, recalibrage prudent, suivi MLflow |
 | IA générative | LLM local, routage des données par question, **détection des chiffres inventés**, actions proposées puis validées par l'humain, jeu d'évaluation |
 | Produit | API FastAPI comme source unique de vérité, tableau de bord Streamlit avec une direction artistique propre |
@@ -130,7 +130,7 @@ docker run --rm -v "$(pwd)/data:/data" garmin-run process  # vos données brutes
 | Mode | Étapes |
 |---|---|
 | `demo` | données synthétiques → silver → gold |
-| `sync` | export Garmin Connect → silver → gold |
+| `sync` | export Garmin Connect, météo des sorties → silver → gold |
 | `process` | silver → gold à partir des données brutes existantes |
 | `train` | entraînement et évaluation du modèle de récupération |
 | `transfer` | expérience de transfert avec LifeSnaps (si le fichier est présent dans le volume) |
@@ -293,6 +293,23 @@ python scripts/run_pipeline.py coach         # équivalent
 ```
 
 Indicateurs suivis dans MLflow (expérience « coach-evaluation ») : routage des données, faits attendus cités, part des réponses sans chiffre non vérifiable, respect des règles de sécurité, durée moyenne. En CI, le faux modèle vérifie le routage, l'extraction des chiffres et la notation, sans réseau.
+
+</details>
+<details>
+<summary><b>Météo et chaleur</b></summary>
+
+**Collecte** (`ingestion/weather_export.py`) : pour chaque sortie en extérieur, la météo heure par heure pendant la sortie (température, humidité, point de rosée, ressenti, vent, pluie), via [Open-Meteo](https://open-meteo.com/) : réanalyse historique ERA5 pour les sorties de plus de 6 jours, modèle de prévision pour les plus récentes. Une requête par lieu (à 10 km près) et par source, incrémentale, sans effet bloquant si l'API ne répond pas. Couche silver : `activity_weather.parquet`, une ligne par sortie.
+
+**Effet de la chaleur** (`processing/heat.py`) :
+- indice **WBGT** (température et humidité combinées, l'indice de World Athletics), approché par la formule du Bureau of Meteorology australien ;
+- **référence** : environ 0,3 % de temps en plus par °C de WBGT au-dessus de 10 °C. Les meilleurs marathoniens perdent ~0,19 %/°C et les coureurs moins rapides davantage (Ely et al., 2007, *Medicine & Science in Sports & Exercise*) ;
+- **sensibilité personnelle** : à allure égale, la FC monte quand il fait chaud, donc la VO2 max estimée baisse. La pente de cette baisse, mesurée sur mes sorties, est combinée à la référence selon sa précision (pondération par l'inverse des variances) : une mesure bruitée compte peu.
+
+**Utilisation** : performances et VO2 max sont ramenées à des conditions idéales (un 10 km couru à 24 °C vaut mieux que son chrono), puis le temps prédit est allongé selon la météo du jour J. Si la course a lieu dans les 15 jours, l'application prend la prévision Open-Meteo de mon lieu habituel (`GET /meteo/prevision`). L'analyse d'une sortie affiche sa météo et son effet ; le coach en tient compte dans son avis.
+
+**Mesure** : le backtest compare la méthode avec et sans météo (`sans_meteo`). La sensibilité est réapprise à chaque date sur les seules données antérieures ; un test échoue si une donnée future y entre.
+
+Données météo : Open-Meteo.com, licence [CC BY 4.0](https://open-meteo.com/en/licence).
 
 </details>
 <details>
@@ -483,7 +500,8 @@ pytest -v        # tests unitaires et test de bout en bout du pipeline
 ```
 ├── ingestion/
 │   ├── garmin_export.py         # export Garmin Connect -> data/raw (bronze)
-│   └── garmin_push.py           # envoi de la séance du jour sur la montre
+│   ├── garmin_push.py           # envoi de la séance du jour sur la montre
+│   └── weather_export.py        # météo de chaque sortie et prévisions (Open-Meteo)
 ├── processing/
 │   ├── build_silver.py          # bronze -> silver (Parquet)
 │   ├── build_gold.py            # silver -> gold (TRIMP, ATL, CTL, TSB)
@@ -499,6 +517,7 @@ pytest -v        # tests unitaires et test de bout en bout du pipeline
 │   ├── adjustments.py           # modifications du planning proposées par le coach, validées par l'utilisateur
 │   ├── rehab.py                 # douleurs fréquentes : exercices relus, signaux d'alerte, spécialiste
 │   ├── atomic.py                # écritures atomiques des tables
+│   ├── heat.py                  # WBGT, effet de la chaleur, sensibilité personnelle
 │   ├── watch.py                 # conversion des séances en entraînements Garmin, envoi sans doublon
 │   └── planning.py              # plan d'entraînement jusqu'à la course
 ├── scripts/
@@ -573,6 +592,7 @@ pytest -v        # tests unitaires et test de bout en bout du pipeline
 - [x] Évaluation du coach et détection des chiffres inventés
 - [x] Modifications du planning proposées par le coach et validées d'un clic ; exercices pour les douleurs
 - [x] Démo en ligne sur Streamlit Community Cloud, redéployée à chaque push
+- [x] Météo de chaque sortie (Open-Meteo) : effet de la chaleur mesuré, prévision du jour de course
 - [ ] Questionnaires d'après-course comme jeu d'évaluation
 - [ ] Coach proactif le matin (séance allégée proposée si la récupération est basse)
 - [ ] Mémoire du coach (préférences, blessures validées) et recherche dans des sources fiables (RAG)

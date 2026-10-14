@@ -67,6 +67,8 @@ def build_activities() -> pd.DataFrame:
             "avg_gap_speed_ms": a.get("avgGradeAdjustedSpeed"),
             "avg_speed_ms": a.get("averageSpeed"),
             "avg_hr": a.get("averageHR"),
+            "start_lat": a.get("startLatitude"),
+            "start_lon": a.get("startLongitude"),
             "max_hr": a.get("maxHR"),
             "calories": a.get("calories"),
             "aerobic_te": a.get("aerobicTrainingEffect"),
@@ -91,6 +93,30 @@ def build_activities() -> pd.DataFrame:
     df["pace_min_km"] = (df["duration_min"] / df["distance_km"]).where(is_run)
 
     return df.sort_values("start_time").reset_index(drop=True)
+
+
+def build_weather() -> pd.DataFrame:
+    """Une ligne par sortie : météo moyenne pendant la sortie (relevés horaires d'Open-Meteo, couche bronze)."""
+    from processing.heat import wbgt_simplified
+
+    rows = []
+    folder = RAW_DIR / "weather"
+    for path in sorted(folder.glob("*.json")) if folder.exists() else []:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        hours = pd.DataFrame(data.get("hourly", []))
+        if hours.empty:
+            continue
+        temp, humidity = hours["temperature_2m"].mean(), hours["relative_humidity_2m"].mean()
+        rows.append({"activity_id": data["activityId"], "source": data.get("source"),
+                     "temperature_c": round(float(temp), 1), "humidite_pct": round(float(humidity)),
+                     "point_de_rosee_c": round(float(hours["dew_point_2m"].mean()), 1),
+                     "ressenti_c": round(float(hours["apparent_temperature"].mean()), 1),
+                     "vent_kmh": round(float(hours["wind_speed_10m"].mean()), 1),
+                     "pluie_mm": round(float(hours["precipitation"].sum()), 1),
+                     "wbgt_c": round(wbgt_simplified(temp, humidity), 1)})
+    columns = ["activity_id", "source", "temperature_c", "humidite_pct", "point_de_rosee_c", "ressenti_c",
+               "vent_kmh", "pluie_mm", "wbgt_c"]
+    return pd.DataFrame(rows, columns=columns)
 
 
 def build_splits() -> pd.DataFrame:
@@ -185,6 +211,10 @@ def main() -> None:
     splits = build_splits()
     write_parquet(splits, SILVER_DIR / "splits.parquet")
     print(f"\nTours au km : {len(splits)} tours, {splits['activity_id'].nunique()} sorties")
+
+    weather = build_weather()
+    write_parquet(weather, SILVER_DIR / "activity_weather.parquet")
+    print(f"Météo : {len(weather)} sorties renseignées (données Open-Meteo.com, CC BY 4.0)")
 
     daily = build_daily()
     write_parquet(daily, SILVER_DIR / "daily.parquet")

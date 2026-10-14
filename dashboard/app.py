@@ -105,6 +105,14 @@ def delete(path: str) -> bool:
         return False
 
 
+def get_quiet(path: str, **params) -> dict | None:
+    """Lecture facultative (prévision météo...) : en cas d'échec, rien n'est affiché."""
+    try:
+        return api_get(path, tuple(sorted((k, v) for k, v in params.items() if v is not None)))
+    except (requests.ConnectionError, requests.Timeout, RuntimeError):
+        return None
+
+
 def get(path: str, **params) -> dict | None:
     try:
         return api_get(path, tuple(sorted((k, v) for k, v in params.items() if v is not None)))
@@ -866,7 +874,8 @@ def page_planning() -> None:
 
 # --- Prédictions ---------------------------------------------------------------------------------
 
-METHOD_NAMES = {"application": "Foulée (affiché)", "sans_correction": "Sans correction",
+METHOD_NAMES = {"application": "Foulée (affiché)", "sans_meteo": "Foulée sans la météo",
+                "sans_correction": "Sans correction",
                 "recalibree": "Recalibrage seul", "questionnaires": "Questionnaires seuls",
                 "vo2max_montre": "VO2 max de la montre", "relation_fc_vitesse": "Relation FC / vitesse",
                 "performances": "Performances seules", "riegel_derniere": "Riegel, dernière performance"}
@@ -934,6 +943,14 @@ def prediction_quality() -> None:
         points.append(f"Foulée corrige ses prédictions à partir de ses erreurs passées sur tes courses : sans cette correction, "
                       f"l'erreur serait de {pct(no_corr['mape_pct'])} % (biais {pct(no_corr['biais_pct'], sign=True)} %) ; "
                       f"elle {'la réduit' if gain > 0 else 'ne la réduit pas'} à {pct(app_score['mape_pct'])} %.")
+    no_weather = data["methodes"].get("sans_meteo")
+    if no_weather:
+        diff = no_weather["mape_pct"] - app_score["mape_pct"]
+        verdict = ("la réduit" if diff > 0.05 else "l'augmente" if diff < -0.05 else "ne la change pas")
+        points.append(f"La prise en compte de la météo (chaleur pendant la performance et le jour J) {verdict} : "
+                      f"{pct(no_weather['mape_pct'])} % d'erreur sans elle, {pct(app_score['mape_pct'])} % avec ; "
+                      f"biais {pct(no_weather['biais_pct'], sign=True)} % sans, "
+                      f"{pct(app_score['biais_pct'], sign=True)} % avec.")
     riegel = data["methodes"].get("riegel_derniere")
     if riegel:
         better = app_score["mape_pct"] < riegel["mape_pct"]
@@ -950,6 +967,30 @@ def prediction_quality() -> None:
                                    for m, s in ranking]), hide_index=True, width="stretch")
 
 
+OPEN_METEO = '<a class="source-meteo" href="https://open-meteo.com/" target="_blank">Open-Meteo.com</a>'
+
+
+def race_weather_inputs() -> tuple[float, float, str]:
+    """Température et humidité du jour de course : prévision Open-Meteo si ta course a lieu dans les 15 jours,
+    sinon conditions moyennes ; toujours modifiables."""
+    goals = (get("/objectifs") or {}).get("objectifs", [])
+    goal = next((g for g in goals if g.get("actif") and 0 <= g.get("jours_restants", -1) <= 15), None)
+    default_t, default_h, origin = 15.0, 65.0, "conditions moyennes (15 °C, 65 % d'humidité), à ajuster"
+    if goal:
+        forecast = get_quiet("/meteo/prevision", date_course=goal["date_course"], heure=9)
+        if forecast:
+            default_t, default_h = float(forecast["temperature_c"]), float(forecast["humidite_pct"])
+            when = date.fromisoformat(goal["date_course"]).strftime("%d/%m")
+            origin = f"prévision Open-Meteo pour ta course du {when} à 9 h"
+    with st.expander("Météo du jour de course", expanded=bool(goal)):
+        c1, c2 = st.columns(2)
+        temperature = c1.number_input("Température (°C)", -10.0, 45.0, default_t, step=1.0, key="meteo_t")
+        humidity = c2.number_input("Humidité (%)", 5.0, 100.0, default_h, step=5.0, key="meteo_h")
+    if (temperature, humidity) != (default_t, default_h):
+        origin = "valeurs saisies"
+    return temperature, humidity, origin
+
+
 def page_predictions() -> None:
     st.title("Mes prédictions")
     c1, c2, c3 = st.columns([3, 3, 2])
@@ -961,16 +1002,20 @@ def page_predictions() -> None:
         other_km = st.number_input("Distance (km)", min_value=1.0, max_value=100.0, value=15.0, step=0.5)
         label = f"{other_km:g} km".replace(".", ",")
     key = "personnalisee" if other_km else DISTANCES[label]
+    temperature, humidity, origin = race_weather_inputs()
     preds = get("/predictions", distance="10k" if other_km else key, ajuster_au_jour=adjust, denivele_m=dplus,
-                distance_km=other_km)
+                distance_km=other_km, temperature_c=temperature, humidite_pct=humidity)
     if not preds:
         return
     p = preds["predictions"][key]
+    weather = preds["meteo"]
 
     hero(f"Ton {label.lower()} prédit", p["temps_ajuste"],
          [("Allure", p["allure_course"]), ("Sur le plat", p["temps_plat"]),
           ("Prédiction de la montre", p["prediction_montre"] or "—"),
-          ("Forme du jour", f"{preds['ajustement_du_jour_pct']:+.1f} %".replace(".", ","))])
+          ("Forme du jour", f"{preds['ajustement_du_jour_pct']:+.1f} %".replace(".", ",")),
+          ("Météo", f"+{weather['penalite_pct']:.1f} %".replace(".", ","))])
+    st.caption(f"Météo retenue : {origin}. Données météo : Open-Meteo.com (CC BY 4.0).")
     if preds["avertissements"]:
         st.markdown('<div class="lecture" style="margin-top:1.4rem"><h4>À savoir</h4><p>'
                     + "<br>".join(esc(w) for w in preds["avertissements"]) + "</p></div>", unsafe_allow_html=True)
@@ -994,7 +1039,7 @@ def page_predictions() -> None:
     st.caption("Forme du jour : " + " ".join(preds["explications_ajustement"]))
 
     st.header("Nutrition et hydratation")
-    temperature = st.slider("Température prévue le jour de la course (°C)", -5, 40, 15)
+    st.caption(f"Pour {temperature:g} °C, la température retenue plus haut.")
     food = get("/nutrition", distance="10k" if other_km else key, temperature_c=temperature, denivele_m=dplus,
                distance_km=other_km)
     if not food:
@@ -1117,6 +1162,11 @@ def run_analysis_section() -> None:
     hero(f"{r['type_libelle'].capitalize()} du {when}, à {r['date'][11:]}", r["allure"].removesuffix("/km"),
          [("Distance", f"{r['distance_km']:g} km".replace(".", ",")), ("Durée", f"{r['duree_min']} min"),
           ("FC moyenne", fc), ("Dénivelé", f"{r['denivele_m']} m")])
+    weather = data.get("meteo")
+    if weather:
+        st.markdown(f'<p class="meteo-sortie"><b>Météo</b>{esc(weather["resume"])}'
+                    f'<span class="source-meteo">Données {OPEN_METEO}</span></p>',
+                    unsafe_allow_html=True)
 
     coach_comment(chosen)
 

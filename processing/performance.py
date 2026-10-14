@@ -156,7 +156,7 @@ def collect_performances(activities: pd.DataFrame, labels: pd.DataFrame | None =
         distance, time_s = race_effort(r)
         dplus = _dplus(r) * distance / r["distance_m"]  # D+ au prorata de la portion
         rows.append({"date": r["date"], "distance_m": flat_equivalent_m(distance, dplus), "time_s": time_s,
-                     "source": "course", "dplus_m": round(dplus)})
+                     "source": "course", "dplus_m": round(dplus), "activity_id": r["activity_id"]})
 
     hard = runs[runs["kind"].isin(HARD_SESSIONS - {"course"})]
     for col, dist in (("fastest_5k_s", 5000.0), ("fastest_10k_s", 10000.0)):
@@ -165,10 +165,10 @@ def collect_performances(activities: pd.DataFrame, labels: pd.DataFrame | None =
                 source = f"meilleur {int(dist / 1000)} km ({r['kind']})"
                 dplus = _dplus(r) * dist / r["distance_m"]
                 rows.append({"date": r["date"], "distance_m": flat_equivalent_m(dist, dplus), "time_s": r[col],
-                             "source": source, "dplus_m": round(dplus)})
+                             "source": source, "dplus_m": round(dplus), "activity_id": r["activity_id"]})
 
     # distance_m est une distance ÉQUIVALENTE SUR LE PLAT (D+ converti par l'équivalence de Scarf)
-    perf = pd.DataFrame(rows, columns=["date", "distance_m", "time_s", "source", "dplus_m"])
+    perf = pd.DataFrame(rows, columns=["date", "distance_m", "time_s", "source", "dplus_m", "activity_id"])
     if perf.empty:
         return perf.assign(vdot=pd.Series(dtype=float))
     pace = perf["time_s"] / (perf["distance_m"] / 1000)
@@ -210,7 +210,7 @@ def hr_speed_vo2max(activities: pd.DataFrame, labels: pd.DataFrame | None, hr_re
     vo2 = runs["flat_speed_ms"].mul(60).map(vo2_at_speed)  # vitesse équivalente sur le plat
     runs["vo2max"] = 3.5 + (vo2 - 3.5) / runs["reserve"]  # 3,5 ml/kg/min : consommation au repos
     runs["date"] = pd.to_datetime(runs["start_time"]).dt.normalize()
-    return runs[["date", "vo2max", "reserve", "kind"]].sort_values("date").reset_index(drop=True)
+    return runs[["date", "vo2max", "reserve", "kind", "activity_id"]].sort_values("date").reset_index(drop=True)
 
 
 PHYSIO_SOURCES = {

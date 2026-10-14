@@ -10,6 +10,7 @@ Toutes les réponses sont calculées à la demande à partir des couches silver 
 import functools
 import json
 import os
+import time
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal
@@ -75,6 +76,14 @@ from processing.goals import (
     load_goals,
     set_active,
     validate_goal,
+)
+from processing.heat import (
+    attach_weather,
+    heat_level,
+    heat_penalty_pct,
+    learn_sensitivity,
+    normalize,
+    race_weather_penalty,
 )
 from processing.insights import build_analysis
 from processing.nutrition import race_nutrition
@@ -143,18 +152,36 @@ def reference_day(gold: pd.DataFrame) -> date:
     return pd.to_datetime(gold["date"]).max().date()
 
 
-def estimation_inputs():
-    """Données nécessaires à l'estimation du niveau : performances et sources physiologiques."""
+WEATHER_COLUMNS = ["activity_id", "source", "temperature_c", "humidite_pct", "point_de_rosee_c", "ressenti_c",
+                   "vent_kmh", "pluie_mm", "wbgt_c"]
+
+
+def activity_weather() -> pd.DataFrame:
+    """Météo moyenne de chaque sortie (vide tant qu'aucune synchronisation ne l'a récupérée)."""
+    if not (DATA_DIR / "silver" / "activity_weather.parquet").exists():
+        return pd.DataFrame(columns=WEATHER_COLUMNS)
+    return read_parquet("silver/activity_weather.parquet")
+
+
+def heat_inputs():
+    """Performances et VO2 max FC/vitesse avec leur météo, avant correction ; sensibilité à la chaleur."""
     gold = read_parquet("gold/daily_features.parquet")
     activities = read_parquet("silver/activities.parquet")
     labels = read_labels()
-    perf = collect_performances(activities, labels, efforts_by_activity(load_feedback(DATA_DIR)))
+    weather = activity_weather()
+    perf = attach_weather(collect_performances(activities, labels, efforts_by_activity(load_feedback(DATA_DIR))),
+                          weather)
     hr_max = float(activities["max_hr"].max())
     hr_rest = float(gold["resting_hr"].median())
-    physio = {
-        "vo2max_montre": vo2max_history(activities),
-        "relation_fc_vitesse": hr_speed_vo2max(activities, labels, hr_rest, hr_max),
-    }
+    steady = attach_weather(hr_speed_vo2max(activities, labels, hr_rest, hr_max), weather)
+    return gold, activities, perf, steady, learn_sensitivity(steady)
+
+
+def estimation_inputs():
+    """Données nécessaires à l'estimation du niveau, ramenées à des conditions idéales (sans chaleur)."""
+    gold, activities, perf, steady, sensitivity = heat_inputs()
+    perf, steady = normalize(perf, steady, sensitivity["pct_par_degre"])
+    physio = {"vo2max_montre": vo2max_history(activities), "relation_fc_vitesse": steady}
     return gold, perf, physio
 
 
@@ -187,7 +214,8 @@ def _data_version() -> tuple:
     """Dates de modification des fichiers qui influencent les prédictions : la correction n'est recalculée
     que si l'un d'eux change (après une synchronisation, une étiquette ou un questionnaire)."""
     files = [DATA_DIR / "gold" / "daily_features.parquet", DATA_DIR / "silver" / "activities.parquet",
-             DATA_DIR / "labels" / "run_labels.csv", DATA_DIR / "feedback" / "feedback.jsonl"]
+             DATA_DIR / "labels" / "run_labels.csv", DATA_DIR / "feedback" / "feedback.jsonl",
+             DATA_DIR / "silver" / "activity_weather.parquet"]
     return (str(DATA_DIR), *(f.stat().st_mtime if f.exists() else 0 for f in files))
 
 
@@ -202,6 +230,19 @@ def _correction_for(version: tuple) -> tuple[float, str, int]:
     return bias, "questionnaires", answers
 
 
+@functools.lru_cache(maxsize=4)
+def _heat_for(version: tuple) -> dict:
+    return heat_inputs()[-1]
+
+
+def heat_profile() -> dict:
+    """Ta sensibilité à la chaleur (% de temps en plus par °C de WBGT au-dessus de 10 °C)."""
+    try:
+        return _heat_for(_data_version())
+    except (HTTPException, FileNotFoundError, KeyError):
+        return learn_sensitivity(pd.DataFrame(columns=["date", "vo2max", "wbgt_c"]))
+
+
 def prediction_correction() -> tuple[float, str, int]:
     """(correction en %, origine, nombre de points) : recalibrage appris sur les erreurs passées
     dès 3 performances testées, sinon correction déclarée dans les questionnaires."""
@@ -211,10 +252,14 @@ def prediction_correction() -> tuple[float, str, int]:
         return 0.0, "aucune", 0
 
 
-def race_time_s(vdot: float, meters: float, denivele_m: int = 0, bias_pct: float | None = None) -> float:
-    """Temps prédit sur une distance : VDOT, D+ (équivalence de Scarf), correction apprise."""
+def race_time_s(vdot: float, meters: float, denivele_m: int = 0, bias_pct: float | None = None,
+                heat_pct: float | None = None) -> float:
+    """Temps prédit sur une distance : VDOT (conditions idéales), D+ (équivalence de Scarf), météo du jour de
+    course (conditions moyennes sans prévision), correction apprise."""
     bias = prediction_correction()[0] if bias_pct is None else bias_pct
-    return predict_time_s(vdot, flat_equivalent_m(meters, denivele_m)) * (1 + bias / 100)
+    if heat_pct is None:
+        heat_pct = race_weather_penalty(None, None, heat_profile()["pct_par_degre"])["penalite_pct"]
+    return predict_time_s(vdot, flat_equivalent_m(meters, denivele_m)) * (1 + heat_pct / 100) * (1 + bias / 100)
 
 
 def distance_from(distance: str, distance_km: float | None) -> tuple[str, float, str]:
@@ -258,8 +303,13 @@ def predictions(
     ajuster_au_jour: bool = Query(True, description="Appliquer l'état du jour (nuit, fatigue accumulée)"),
     denivele_m: int = Query(0, ge=0, le=5000, description="D+ total du parcours visé, en mètres"),
     distance_km: float | None = Query(None, ge=1, le=100, description="Distance libre en km (remplace `distance`)"),
+    temperature_c: float | None = Query(None, ge=-20, le=45, description="Température prévue le jour de la course"),
+    humidite_pct: float | None = Query(None, ge=0, le=100, description="Humidité prévue (%)"),
 ) -> dict:
     """Temps prédits : temps de base (forme de fond) et temps ajusté à la forme du jour.
+
+    La météo du jour de course allonge le temps selon ta sensibilité à la chaleur ; sans température fournie,
+    des conditions moyennes (15 °C, 65 % d'humidité) sont supposées.
 
     Avec `denivele_m`, le temps tient compte du D+ du parcours ; `temps_plat` reste fourni pour comparaison.
     """
@@ -269,15 +319,18 @@ def predictions(
     garmin = read_garmin_predictions()
 
     bias, origin, n_points = prediction_correction()
+    profile = heat_profile()
+    weather = race_weather_penalty(temperature_c, humidite_pct, profile["pct_par_degre"])
+    heat = weather["penalite_pct"]
     if distance_km:
         targets = {"personnalisee": distance_km * 1000}
     else:
         targets = DISTANCES_M if distance == "toutes" else {distance: DISTANCES_M[distance]}
     results = {}
     for name, meters in targets.items():
-        flat = race_time_s(estimate["vdot"], meters, 0, bias)
+        flat = race_time_s(estimate["vdot"], meters, 0, bias, heat)
         # Parcours vallonné : temps d'un parcours plat de distance équivalente (équivalence de Scarf)
-        base = race_time_s(estimate["vdot"], meters, denivele_m, bias)
+        base = race_time_s(estimate["vdot"], meters, denivele_m, bias, heat)
         adjusted = base * (1 + adj)
         results[name] = {
             "temps_plat": format_time(flat),
@@ -302,6 +355,7 @@ def predictions(
                if origin == "recalibrage"
                else f"d'après tes réponses aux questionnaires après course ({n_points} réponse(s))")
         warnings.append(f"Temps {sens} de {abs(bias):.1f} % {why}.".replace(".", ",", 1))
+    warnings.append(weather_sentence(weather, profile))
     if denivele_m:
         warnings.append(f"D+ de {denivele_m} m converti en distance de plat équivalente (1 m de montée = 7,92 m de plat).")
         warnings.append("La prédiction de la montre suppose un parcours plat.")
@@ -312,10 +366,95 @@ def predictions(
         "correction_origine": origin,
         "estimation": estimate["composantes"],
         "ajustement_du_jour_pct": round(adj * 100, 1),
+        "meteo": weather,
+        "sensibilite_chaleur": profile,
         "explications_ajustement": reasons,
         "predictions": results,
         "avertissements": warnings,
     }
+
+
+def fr(value: float, decimals: int = 1) -> str:
+    """Nombre au format français : 16,8 ; sans décimale inutile (15 et non 15,0)."""
+    text = f"{value:.{decimals}f}".rstrip("0").rstrip(".") if decimals else f"{value:.0f}"
+    return text.replace(".", ",")
+
+
+def sensitivity_sentence(profile: dict) -> str:
+    value = f"{fr(profile['pct_par_degre'], 2)} % par °C au-dessus de 10 °C de WBGT"
+    if profile["origine"] != "personnelle":
+        return f"{value} (valeur de référence, en attendant assez de sorties avec leur météo)"
+    weight = profile.get("poids_mesure_pct", 0)
+    if weight < 50:
+        return (f"{value} (surtout la valeur de référence : tes {profile['sorties']} sorties ne la mesurent pas encore "
+                f"précisément et comptent pour {weight} %)")
+    return f"{value} (mesurée sur tes {profile['sorties']} sorties)"
+
+
+def weather_sentence(weather: dict, profile: dict) -> str:
+    conditions = ("conditions moyennes, sans prévision" if weather["par_defaut"]
+                  else f"{fr(weather['temperature_c'])} °C, {fr(weather['humidite_pct'], 0)} % d'humidité")
+    return (f"Météo : {conditions} (WBGT {fr(weather['wbgt_c'])} °C, {weather['niveau']}), temps allongés de "
+            f"{fr(weather['penalite_pct'])} %. Ta sensibilité à la chaleur : {sensitivity_sentence(profile)}.")
+
+
+def home_location() -> tuple[float, float] | None:
+    """Lieu habituel de tes sorties : médiane des positions de départ."""
+    activities = read_parquet("silver/activities.parquet")
+    if "start_lat" not in activities:
+        return None
+    points = activities.dropna(subset=["start_lat", "start_lon"])
+    if points.empty:
+        return None
+    return float(points["start_lat"].median()), float(points["start_lon"].median())
+
+
+FORECAST_CACHE_S = 3 * 3600
+
+
+@app.get("/meteo/prevision", tags=["meteo"])
+def prevision(date_course: date = Query(..., description="Jour de la course (AAAA-MM-JJ)"),
+              heure: int = Query(9, ge=0, le=23, description="Heure de départ")) -> dict:
+    """Prévision Open-Meteo à ton lieu habituel de course, et son effet sur ton temps (jusqu'à 16 jours)."""
+    days = (date_course - today_date()).days
+    if not 0 <= days <= 15:
+        raise HTTPException(422, "Prévision disponible du jour même jusqu'à 15 jours à l'avance.")
+    home = home_location()
+    if home is None:
+        raise HTTPException(404, "Aucune sortie avec position de départ : impossible de situer la prévision.")
+    cache = DATA_DIR / "meteo" / f"prevision-{date_course.isoformat()}-{heure:02d}.json"
+    if cache.exists() and time.time() - cache.stat().st_mtime < FORECAST_CACHE_S:
+        forecast_data = json.loads(cache.read_text(encoding="utf-8"))
+    else:
+        from ingestion.weather_export import forecast
+
+        try:
+            forecast_data = forecast(home[0], home[1], date_course, heure)
+        except Exception as exc:
+            raise HTTPException(503, f"Prévision Open-Meteo indisponible : {exc}") from exc
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(forecast_data), encoding="utf-8")
+    effect = race_weather_penalty(forecast_data["temperature_c"], forecast_data["humidite_pct"],
+                                  heat_profile()["pct_par_degre"])
+    return {**forecast_data, **effect, "source": "Open-Meteo.com (CC BY 4.0)"}
+
+
+def run_weather(activity_id: int) -> dict | None:
+    """Météo d'une sortie et son effet estimé, en mots."""
+    weather = activity_weather()
+    row = weather[weather["activity_id"] == activity_id]
+    if row.empty:
+        return None
+    w = row.iloc[0]
+    pct = heat_penalty_pct(float(w["wbgt_c"]), heat_profile()["pct_par_degre"])
+    text = (f"{fr(w['temperature_c'])} °C, {fr(w['humidite_pct'], 0)} % d'humidité, vent {fr(w['vent_kmh'], 0)} km/h"
+            + (f", {fr(w['pluie_mm'])} mm de pluie" if w["pluie_mm"] else ""))
+    effect = ("conditions idéales : la météo n'explique rien" if pct < 0.5 else
+              f"à effort égal, environ {fr(pct)} % plus lent qu'au frais, et une FC un peu plus haute")
+    return {"temperature_c": float(w["temperature_c"]), "humidite_pct": float(w["humidite_pct"]),
+            "vent_kmh": float(w["vent_kmh"]), "pluie_mm": float(w["pluie_mm"]), "wbgt_c": float(w["wbgt_c"]),
+            "niveau": heat_level(float(w["wbgt_c"])), "effet_chaleur_pct": round(pct, 1),
+            "resume": f"{text} (WBGT {fr(w['wbgt_c'])} °C, {heat_level(float(w['wbgt_c']))}) : {effect}."}
 
 
 @app.get("/allures", tags=["performance"])
@@ -796,7 +935,8 @@ def coach_tools() -> dict:
 
     return {
         "predictions": lambda distance="10k", distance_km=None, denivele_m=0: predictions(
-            distance=distance, ajuster_au_jour=True, denivele_m=int(denivele_m or 0), distance_km=distance_km),
+            distance=distance, ajuster_au_jour=True, denivele_m=int(denivele_m or 0), distance_km=distance_km,
+            temperature_c=None, humidite_pct=None),
         "allures": lambda: allures(fenetre_jours=120),
         "nutrition": lambda distance="semi", distance_km=None, temperature_c=15: nutrition(
             distance=distance, temperature_c=float(temperature_c), denivele_m=0, distance_km=distance_km),
@@ -834,7 +974,7 @@ def coach_fetchers() -> dict:
     def predictions_(q):
         race = _race(q)
         p = predictions(distance=race.get("distance", "10k"), ajuster_au_jour=True, denivele_m=0,
-                        distance_km=race.get("distance_km"))
+                        distance_km=race.get("distance_km"), temperature_c=None, humidite_pct=None)
         key, pred = next(iter(p["predictions"].items()))
         # noms explicites : un petit modèle confond facilement allure de course et allure d'entraînement
         return {"course_visee": key if key != "personnalisee" else f"{race['distance_km']} km",
@@ -1051,7 +1191,10 @@ def analyse_course(activity_id: int | None = Query(None, description="Sortie à 
         except HTTPException:
             reco = None
     result = analyse_run(run, laps, run["kind"] if isinstance(run["kind"], str) else None, runs, hr_max, reco)
-    return {"activity_id": int(run["activity_id"]), **result}
+    weather = run_weather(int(run["activity_id"]))
+    if weather and weather["effet_chaleur_pct"] >= 1:
+        result["points"] = [*result.get("points", []), f"Météo : {weather['resume']}"]
+    return {"activity_id": int(run["activity_id"]), **result, "meteo": weather}
 
 
 # --- Commentaire de sortie par le coach IA ---------------------------------------------------------
@@ -1084,7 +1227,8 @@ def run_context(activity_id: int) -> dict:
     return {"sortie": analysis["resume"], "kilometres": laps, "regularite": analysis["regularite"],
             "derive_cardiaque": analysis["derive"], "zones": analysis["zones"], "conformite": analysis["conformite"],
             "efficacite_vs_sorties_similaires": analysis["comparaison"], "constats": analysis["points"],
-            "nuit_precedente_et_forme": night_info, "ressenti_declare": feedback, "sorties_similaires": comparables}
+            "nuit_precedente_et_forme": night_info, "ressenti_declare": feedback, "sorties_similaires": comparables,
+            "meteo_pendant_la_sortie": analysis.get("meteo")}
 
 
 def commentary_file(activity_id: int):

@@ -7,8 +7,10 @@ compare au chrono. Aucune information du jour de la performance n'est utilisée 
 que la mesure soit honnête.
 
 Méthodes comparées :
-- application    : la prédiction affichée : moyenne des estimations, recalibrée sur les erreurs passées
-                   sur tes COURSES (dès la première ; sans course, correction des questionnaires) ;
+- application    : la prédiction affichée : moyenne des estimations ramenées à des conditions idéales (chaleur
+                   corrigée), allongée selon la météo du jour, recalibrée sur les erreurs passées sur tes COURSES
+                   (dès la première ; sans course, correction des questionnaires) ;
+- sans_meteo     : la même méthode sans aucune correction de chaleur (pour mesurer ce que la météo apporte) ;
 - sans_correction: la moyenne des estimations, sans aucune correction ;
 - recalibree     : la moyenne des estimations, recalibrée sur les erreurs passées uniquement ;
 - questionnaires : la moyenne des estimations, corrigée par les seuls questionnaires ;
@@ -22,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 from processing.feedback import prediction_bias
+from processing.heat import heat_penalty_pct, learn_sensitivity, normalize
 from processing.performance import estimate_vdot, predict_time_s, riegel_time_s
 
 MIN_DAYS_OF_HISTORY = 14  # sans au moins deux semaines de données avant, l'estimation n'a pas de sens
@@ -49,17 +52,38 @@ def recalibration(actual_s, predicted_s) -> float:
     return float(np.clip((np.exp(shrunk) - 1) * 100, -MAX_RECAL_PCT, MAX_RECAL_PCT))
 
 
-def estimate_before(day: pd.Timestamp, perf: pd.DataFrame, physio: dict, load: pd.Series | None) -> dict | None:
-    """Niveau estimé la veille de `day`, avec les seules données strictement antérieures."""
+def inputs_before(day: pd.Timestamp, perf: pd.DataFrame, physio: dict, heat: bool = True):
+    """Données strictement antérieures à `day`, ramenées à des conditions idéales avec la sensibilité à la
+    chaleur apprise sur ces seules données (heat=True), ou laissées telles que mesurées (heat=False)."""
     limit = day - pd.Timedelta(days=1)
+    past_perf = perf[perf["date"] <= limit]
     past = {name: s[s["date"] <= limit] for name, s in physio.items()}
+    sensitivity = 0.0
+    steady = past.get("relation_fc_vitesse")
+    if steady is not None and "vo2max_mesuree" in steady:
+        sensitivity = learn_sensitivity(steady)["pct_par_degre"] if heat else 0.0
+        past_perf, past["relation_fc_vitesse"] = normalize(past_perf, steady, sensitivity)
+    return limit, past_perf, past, sensitivity
+
+
+def estimate_before(day: pd.Timestamp, perf: pd.DataFrame, physio: dict, load: pd.Series | None,
+                    heat: bool = True) -> dict | None:
+    """Niveau estimé la veille de `day`, avec les seules données strictement antérieures."""
+    limit, past_perf, past, sensitivity = inputs_before(day, perf, physio, heat)
     past_load = None if load is None else load[load.index <= limit]
-    return estimate_vdot(perf[perf["date"] <= limit], past, limit.date(), past_load)
+    estimate = estimate_vdot(past_perf, past, limit.date(), past_load)
+    if estimate is not None:
+        estimate["sensibilite_chaleur"] = sensitivity
+    return estimate
 
 
 def backtest(perf: pd.DataFrame, physio: dict, load: pd.Series | None = None,
              feedback: list[dict] | None = None) -> pd.DataFrame:
-    """Une ligne par performance testée : temps réel, temps prédit par chaque méthode, erreurs en %."""
+    """Une ligne par performance testée : temps réel, temps prédit par chaque méthode, erreurs en %.
+
+    La prédiction tient compte de la météo réelle du jour de la performance (comme une prévision de la veille,
+    fiable à un jour) ; « sans_meteo » montre ce qu'aurait donné la même méthode sans aucune correction de chaleur.
+    """
     feedback = feedback or []
     if perf.empty:  # aucune performance (pas encore de course ni de séance dure étiquetée) : rien à tester
         return pd.DataFrame()
@@ -71,29 +95,41 @@ def backtest(perf: pd.DataFrame, physio: dict, load: pd.Series | None = None,
         estimate = estimate_before(p.date, perf, physio, load)
         if estimate is None:
             continue
+        no_heat = estimate_before(p.date, perf, physio, load, heat=False)
+        actual = getattr(p, "time_s_mesure", p.time_s)
         before = (p.date - timedelta(days=1)).date().isoformat()
         bias, _ = prediction_bias([f for f in feedback if f["date_sortie"] <= before])
-        raw = predict_time_s(estimate["vdot"], p.distance_m)  # distance_m : équivalent plat (D+ inclus)
+        race_day = 1 + heat_penalty_pct(getattr(p, "wbgt_c", None), estimate["sensibilite_chaleur"]) / 100
+        raw = predict_time_s(estimate["vdot"], p.distance_m) * race_day  # distance_m : équivalent plat (D+ inclus)
+        raw_no_heat = predict_time_s(no_heat["vdot"], p.distance_m) if no_heat else np.nan
         # Recalibrage : seules les performances strictement antérieures (déjà testées) servent à l'apprendre
         past = [r for r in rows if r["date"] < p.date and r["source"] in RECAL_SOURCES]
         recal = recalibration([r["temps_reel_s"] for r in past], [r["sans_correction"] for r in past])
+        recal_no_heat = recalibration([r["temps_reel_s"] for r in past], [r["sans_meteo_brut"] for r in past])
         correction = recal if len(past) >= MIN_PAST_FOR_RECAL else bias
-        row = {"date": p.date, "source": p.source, "distance_m": p.distance_m, "temps_reel_s": p.time_s,
+        correction_no_heat = recal_no_heat if len(past) >= MIN_PAST_FOR_RECAL else bias
+        row = {"date": p.date, "source": p.source, "distance_m": p.distance_m, "temps_reel_s": actual,
                "vdot_estime": estimate["vdot"], "correction_pct": correction, "erreurs_passees": len(past),
+               "wbgt_c": getattr(p, "wbgt_c", np.nan), "chaleur_pct": (race_day - 1) * 100,
                "application": raw * (1 + correction / 100), "sans_correction": raw,
-               "recalibree": raw * (1 + recal / 100), "questionnaires": raw * (1 + bias / 100)}
+               "recalibree": raw * (1 + recal / 100), "questionnaires": raw * (1 + bias / 100),
+               "sans_meteo_brut": raw_no_heat, "sans_meteo": raw_no_heat * (1 + correction_no_heat / 100)}
         for name, comp in estimate["composantes"].items():
             vdot = comp.get("vdot_estime", comp.get("vdot_deprecie"))
-            row[name] = predict_time_s(vdot, p.distance_m) if vdot else np.nan
+            row[name] = predict_time_s(vdot, p.distance_m) * race_day if vdot else np.nan
         previous = perf[perf["date"] < p.date].sort_values("date")
-        row["riegel_derniere"] = (riegel_time_s(previous.iloc[-1].distance_m, previous.iloc[-1].time_s, p.distance_m)
-                                  if len(previous) else np.nan)
+        if len(previous):
+            last = previous.iloc[-1]
+            last_time = last["time_s_mesure"] if "time_s_mesure" in previous else last["time_s"]
+            row["riegel_derniere"] = riegel_time_s(last["distance_m"], last_time, p.distance_m)
+        else:
+            row["riegel_derniere"] = np.nan
         rows.append(row)
     return pd.DataFrame(rows)
 
 
-METHODS = ["application", "sans_correction", "recalibree", "questionnaires", "vo2max_montre", "relation_fc_vitesse",
-           "performances", "riegel_derniere"]
+METHODS = ["application", "sans_meteo", "sans_correction", "recalibree", "questionnaires", "vo2max_montre",
+           "relation_fc_vitesse", "performances", "riegel_derniere"]
 
 
 def metrics(results: pd.DataFrame) -> dict:

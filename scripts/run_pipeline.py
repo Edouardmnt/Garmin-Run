@@ -20,13 +20,14 @@ ROOT = Path(__file__).resolve().parents[1]
 TRANSFORM = [["processing/build_silver.py"], ["processing/build_gold.py"], ["scripts/make_run_labels.py"]]
 MODES = {
     "demo": [["scripts/generate_sample_data.py"], *TRANSFORM],
-    "sync": [["ingestion/garmin_export.py"], *TRANSFORM],
+    "sync": [["ingestion/garmin_export.py"], ["ingestion/weather_export.py"], *TRANSFORM],
     "process": TRANSFORM,
     "train": [["-m", "ml.train_recovery"]],  # lancé comme module : les modèles maison restent importables
     "transfer": [["-m", "ml.train_transfer"]],
     "evaluation": [["-m", "ml.backtest_predictions"]],
     "coach": [["-m", "ml.eval_coach"]],
-    "matin": [["ingestion/garmin_export.py"], *TRANSFORM, ["-m", "ingestion.garmin_push"]],
+    "matin": [["ingestion/garmin_export.py"], ["ingestion/weather_export.py"], *TRANSFORM,
+              ["-m", "ingestion.garmin_push"]],
 }
 
 

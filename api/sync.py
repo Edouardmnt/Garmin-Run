@@ -1,6 +1,7 @@
 """Synchronisation à la demande : lancée par l'API, en arrière-plan, avec sa progression.
 
-- Les étapes sont celles du pipeline « matin » : Garmin, silver, gold, étiquetage, séance du jour sur la montre.
+- Les étapes sont celles du pipeline « matin » : Garmin, météo des sorties, silver, gold, étiquetage, séance
+  du jour sur la montre.
 - Un verrou sur le volume garantit une seule synchronisation à la fois, même avec plusieurs onglets ouverts.
 - La date de dernière synchronisation est celle de la table gold, que le CronJob et l'API mettent à jour tous deux.
 
@@ -30,8 +31,10 @@ def steps() -> list[tuple[str, list[str]]]:
     first = (("Génération de données de démonstration", ["scripts/generate_sample_data.py"])
              if os.getenv("RUNLAB_SYNC_STEPS") == "demo"
              else ("Récupération de tes données Garmin", ["ingestion/garmin_export.py"]))
-    plan = [first,
-            ("Préparation des données", ["processing/build_silver.py"]),
+    plan = [first]
+    if os.getenv("RUNLAB_SYNC_STEPS") != "demo":
+        plan.append(("Météo de tes sorties", ["ingestion/weather_export.py"]))
+    plan += [("Préparation des données", ["processing/build_silver.py"]),
             ("Calcul de tes indicateurs", ["processing/build_gold.py"]),
             ("Mise à jour de tes séances", ["scripts/make_run_labels.py"])]
     if os.getenv("RUNLAB_SYNC_STEPS") != "demo":

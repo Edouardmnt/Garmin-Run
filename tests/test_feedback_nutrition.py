@@ -137,7 +137,8 @@ def test_correction_apprise_appliquee_aux_predictions(data_dir, tmp_path, monkey
     assert with_recal["correction_origine"] == "recalibrage"
     assert any("erreurs passées" in w for w in with_recal["avertissements"])
     raw = api.main.predict_time_s(with_recal["vdot"], 10000)
-    expected = raw * (1 + with_recal["correction_questionnaires_pct"] / 100)
+    heat = with_recal["meteo"]["penalite_pct"]  # météo du jour de course (conditions moyennes par défaut)
+    expected = raw * (1 + heat / 100) * (1 + with_recal["correction_questionnaires_pct"] / 100)
     # VDOT arrondi à 0,1 dans la réponse : tolérance de 0,3 %
     assert with_recal["predictions"]["10k"]["temps_base_s"] == pytest.approx(expected, rel=0.003)
 

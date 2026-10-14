@@ -267,3 +267,9 @@ h3 { font-size: 1rem !important; font-weight: 600 !important; }
   padding: .3rem 1rem; margin: 0 auto .6rem; max-width: 760px;
 }
 .demo-bandeau a { color: inherit; text-decoration: underline; }
+
+/* Météo */
+.meteo-sortie { font-size: .9rem; color: var(--gris); margin: .2rem 0 1rem; }
+.meteo-sortie b { color: var(--encre, #1f2328); font-weight: 600; margin-right: .35rem; }
+.source-meteo, .source-meteo a { font-size: .75rem; color: var(--gris) !important; margin-left: .4rem;
+  text-decoration: none !important; white-space: nowrap; }
