@@ -117,10 +117,7 @@ def test_correction_apprise_appliquee_aux_predictions(data_dir, tmp_path, monkey
     sans aucune performance, la correction des questionnaires prend le relais."""
     import importlib
     import json
-    import os
     import shutil
-    import subprocess
-    import sys
 
     from fastapi.testclient import TestClient
 
@@ -128,8 +125,6 @@ def test_correction_apprise_appliquee_aux_predictions(data_dir, tmp_path, monkey
 
     data = tmp_path / "data"
     shutil.copytree(data_dir, data)
-    subprocess.run([sys.executable, "scripts/make_run_labels.py"], env={**os.environ, "RUNLAB_DATA_DIR": str(data)},
-                   check=True, capture_output=True)  # étiquettes créées ici : pas de dépendance à l'ordre des tests
     monkeypatch.setenv("RUNLAB_DATA_DIR", str(data))
     importlib.reload(api.main)
     client = TestClient(api.main.app)
@@ -161,8 +156,6 @@ def test_reponse_sans_sortie_ne_cree_pas_de_ligne_vide(data_dir, tmp_path, monke
     import importlib
     import json
     import shutil
-    import subprocess
-    import sys
 
     from fastapi.testclient import TestClient
 
@@ -170,8 +163,6 @@ def test_reponse_sans_sortie_ne_cree_pas_de_ligne_vide(data_dir, tmp_path, monke
 
     data = tmp_path / "data"
     shutil.copytree(data_dir, data)
-    env = {**__import__("os").environ, "RUNLAB_DATA_DIR": str(data)}
-    subprocess.run([sys.executable, "scripts/make_run_labels.py"], env=env, check=True, capture_output=True)
     (data / "feedback").mkdir(exist_ok=True)
     ghost = {"activity_id": 123456789, "date_sortie": "2026-10-04", "rpe": 2, "label": "ef", "douleur": 0,
              "reponses": {"type": "Endurance fondamentale"}}

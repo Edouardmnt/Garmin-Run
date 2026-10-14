@@ -8,13 +8,8 @@ from processing.performance import collect_performances, hr_speed_vo2max, vo2max
 
 
 def inputs(data_dir):
-    import os
-    import subprocess
-    import sys
 
     # Le test crée lui-même les étiquettes : il ne doit pas dépendre de l'ordre d'exécution des autres tests
-    subprocess.run([sys.executable, "scripts/make_run_labels.py"], env={**os.environ, "RUNLAB_DATA_DIR": str(data_dir)},
-                   check=True, capture_output=True)
     acts = pd.read_parquet(data_dir / "silver" / "activities.parquet")
     gold = pd.read_parquet(data_dir / "gold" / "daily_features.parquet")
     labels = pd.read_csv(data_dir / "labels" / "run_labels.csv", sep=";", decimal=",", dtype={"label": str}) \

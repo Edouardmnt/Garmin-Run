@@ -4,8 +4,6 @@ import importlib
 import json
 import os
 import shutil
-import subprocess
-import sys
 from datetime import date
 
 import pytest
@@ -152,8 +150,6 @@ def api(data_dir, tmp_path, monkeypatch):
 
     data = tmp_path / "data"
     shutil.copytree(data_dir, data)
-    subprocess.run([sys.executable, "scripts/make_run_labels.py"], env={**os.environ, "RUNLAB_DATA_DIR": str(data)},
-                   check=True, capture_output=True)
     monkeypatch.setenv("RUNLAB_DATA_DIR", str(data))
     monkeypatch.setenv("RUNLAB_LLM", "fake")
     monkeypatch.setenv("RUNLAB_WATCH_AUTO", "0")

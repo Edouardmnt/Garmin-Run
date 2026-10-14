@@ -1,10 +1,7 @@
 """Évaluation du coach : extraction des chiffres, détection des chiffres inventés, jeu de questions, vérification."""
 
 import importlib
-import os
 import shutil
-import subprocess
-import sys
 
 import pytest
 
@@ -60,9 +57,6 @@ def api(data_dir, tmp_path, monkeypatch):
 
     data = tmp_path / "data"
     shutil.copytree(data_dir, data)
-    # étiquettes créées ici : le test ne dépend pas de l'ordre d'exécution des autres
-    subprocess.run([sys.executable, "scripts/make_run_labels.py"], env={**os.environ, "RUNLAB_DATA_DIR": str(data)},
-                   check=True, capture_output=True)
     monkeypatch.setenv("RUNLAB_DATA_DIR", str(data))
     monkeypatch.setenv("RUNLAB_LLM", "fake")
     importlib.reload(api.main)

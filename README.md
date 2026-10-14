@@ -485,13 +485,22 @@ Analyse sur environ 5 mois de données réelles (≈ 145 nuits suivies), détail
 <details>
 <summary><b>Tests et intégration continue</b></summary>
 
+Plus de 240 tests, en deux niveaux pour garder un retour rapide sans rien perdre en fiabilité :
+
+| Quand | Quoi | Durée |
+|---|---|---|
+| Avant chaque commit (hook git) | `ruff` + tests rapides en parallèle : `pytest -m "not slow" -n auto -x` | ~30 s |
+| À chaque push (GitHub Actions) | `ruff`, **tous** les tests en parallèle (`pytest -n auto`), kubeconform, image Docker construite et testée en même temps | quelques minutes |
+| Publication de l'image | seulement si les tests **et** l'image de test sont verts | quelques secondes (cache) |
+
+Les tests « lents » (`@slow`, marqués dans `tests/conftest.py`) simulent l'interface Streamlit en entier, attendent une vraie synchronisation en arrière-plan ou entraînent des modèles. Les données synthétiques et les étiquettes sont produites une seule fois par processus de test, puis copiées par les tests qui écrivent.
+
 ```bash
 pip install -r requirements-test.txt
-ruff check .     # qualité du code
-pytest -v        # tests unitaires et test de bout en bout du pipeline
+git config core.hooksPath .githooks   # une fois : active le contrôle avant commit
+pytest -m "not slow" -n auto          # rapide
+pytest -n auto                        # complet, comme la CI
 ```
-
-À chaque push sur `main`, GitHub Actions (`.github/workflows/ci.yml`) vérifie le code avec ruff, génère les données synthétiques et exécute tout le pipeline bronze → silver → gold. Les tests vérifient notamment que les sports sont harmonisés, qu'une nuit sans montre reste absente (et non à zéro) et que la cible du modèle correspond bien à la nuit suivante.
 
 </details>
 <details>

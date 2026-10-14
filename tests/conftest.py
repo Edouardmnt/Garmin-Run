@@ -29,3 +29,17 @@ def data_dir(tmp_path_factory):
     for script in SCRIPTS:
         subprocess.run([sys.executable, script], cwd=ROOT, env=env, check=True)
     return out
+
+
+# --- Tests rapides / tests complets -----------------------------------------------------------------------
+# Les tests marqués « slow » simulent l'interface Streamlit en entier, attendent une synchronisation en
+# arrière-plan ou entraînent des modèles. Ils tournent toujours dans la CI (qui seule publie l'image) ;
+# en local, `pytest -m "not slow"` donne un retour en quelques dizaines de secondes avant chaque commit.
+SLOW_MODULES = {"test_dashboard.py", "test_demo.py", "test_sync.py", "test_transfer.py", "test_ml.py"}
+SLOW_TESTS = {"test_evaluation_complete_avec_le_faux_modele", "test_le_pipeline_met_a_jour_l_etiquetage"}
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        if item.path.name in SLOW_MODULES or item.originalname in SLOW_TESTS:
+            item.add_marker(pytest.mark.slow)

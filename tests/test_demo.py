@@ -2,8 +2,6 @@
 
 import importlib
 import json
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -60,8 +58,6 @@ def demo_env(data_dir, tmp_path, monkeypatch):
 
     data = tmp_path / "data"
     shutil.copytree(data_dir, data)
-    subprocess.run([sys.executable, "scripts/make_run_labels.py"], env={**os.environ, "RUNLAB_DATA_DIR": str(data)},
-                   check=True, capture_output=True)
     for key, value in {"RUNLAB_DATA_DIR": str(data), "RUNLAB_DEMO": "1", "RUNLAB_LLM": "demo",
                        "RUNLAB_API_URL": "inprocess", "RUNLAB_AUTO_SYNC": "0", "RUNLAB_WATCH_AUTO": "0"}.items():
         monkeypatch.setenv(key, value)
